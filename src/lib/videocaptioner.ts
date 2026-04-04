@@ -1,5 +1,5 @@
 import { execFile } from "child_process";
-import { mkdir, readFile, rm, readdir, writeFile, unlink } from "fs/promises";
+import { mkdir, readFile, rm, readdir } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
@@ -29,49 +29,40 @@ function exec(
 }
 
 /**
- * 只下载B站视频的音频轨道，返回音频文件路径
- * 使用 yt-dlp -x 只提取音频，文件更小、下载更快
+ * 下载B站视频并用 ffmpeg 提取音频轨道
+ * videocaptioner 内部处理 B站认证（避免 yt-dlp 的 412 问题）
  */
 export async function downloadAudio(bvid: string): Promise<string> {
   const workDir = join(TMP_BASE, randomUUID());
   await mkdir(workDir, { recursive: true });
 
+  // Step 1: 用 videocaptioner 下载视频（它内部处理 B站 WBI 认证）
   const url = `https://www.bilibili.com/video/${bvid}`;
-  const outputPath = join(workDir, "audio.%(ext)s");
+  await exec(VC, ["download", url, "-o", workDir]);
 
-  const args = [
-    "-x",                        // 只提取音频
-    "--audio-format", "m4a",     // 输出 m4a 格式
-    "-o", outputPath,
-    "--no-playlist",
-  ];
-
-  // 写 Netscape 格式 cookie 文件，避免 B站 412 错误
-  const sessdata = process.env.BILIBILI_SESSDATA;
-  let cookieFile: string | undefined;
-  if (sessdata) {
-    cookieFile = join(workDir, "cookies.txt");
-    const cookieContent = [
-      "# Netscape HTTP Cookie File",
-      `.bilibili.com\tTRUE\t/\tFALSE\t0\tSESSDATA\t${sessdata}`,
-    ].join("\n");
-    await writeFile(cookieFile, cookieContent, "utf-8");
-    args.push("--cookies", cookieFile);
-  }
-
-  args.push(url);
-
-  await exec("yt-dlp", args);
-
-  // 找到下载的音频文件
   const files = await readdir(workDir);
-  const audioFile = files.find((f) => f.endsWith(".m4a") || f.endsWith(".opus") || f.endsWith(".webm"));
-
-  if (!audioFile) {
-    throw new Error("下载音频失败：未找到音频文件");
+  const videoFile = files.find(
+    (f) => f.endsWith(".mp4") || f.endsWith(".mkv") || f.endsWith(".webm")
+  );
+  if (!videoFile) {
+    throw new Error("下载视频失败：未找到视频文件");
   }
+  const videoPath = join(workDir, videoFile);
 
-  return join(workDir, audioFile);
+  // Step 2: 用 ffmpeg 提取音频轨道（文件更小，转写更快）
+  const audioPath = join(workDir, "audio.m4a");
+  await exec("ffmpeg", [
+    "-i", videoPath,
+    "-vn",              // 不要视频
+    "-acodec", "copy",  // 直接拷贝音频流，不重新编码（极快）
+    "-y",               // 覆盖已有文件
+    audioPath,
+  ]);
+
+  // 删掉视频文件，只保留音频
+  await rm(videoPath, { force: true });
+
+  return audioPath;
 }
 
 /**
