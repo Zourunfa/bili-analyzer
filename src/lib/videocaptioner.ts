@@ -39,13 +39,22 @@ export async function downloadAudio(bvid: string): Promise<string> {
   const url = `https://www.bilibili.com/video/${bvid}`;
   const outputPath = join(workDir, "audio.%(ext)s");
 
-  await exec("yt-dlp", [
+  const args = [
     "-x",                        // 只提取音频
     "--audio-format", "m4a",     // 输出 m4a 格式
     "-o", outputPath,
     "--no-playlist",
-    url,
-  ]);
+  ];
+
+  // 带 SESSDATA cookie 避免 B站 412 错误
+  const sessdata = process.env.BILIBILI_SESSDATA;
+  if (sessdata) {
+    args.push("--add-header", `Cookie: SESSDATA=${sessdata}`);
+  }
+
+  args.push(url);
+
+  await exec("yt-dlp", args);
 
   // 找到下载的音频文件
   const files = await readdir(workDir);
