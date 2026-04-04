@@ -25,10 +25,16 @@ export async function POST(req: NextRequest) {
     const subtitles = await getSubtitle(bvid, cid);
     const text = subtitleToText(subtitles);
 
-    return NextResponse.json({ subtitles, text, count: subtitles.length });
+    return NextResponse.json({ subtitles, text, count: subtitles.length, subtitleSource: "cc" });
   } catch (err) {
     const message = err instanceof Error ? err.message : "获取字幕失败";
     console.error(`[subtitle] Error: ${message}`);
+
+    // 无 CC 字幕时返回标识，让前端走转写流程
+    if (message.includes("没有可用的字幕")) {
+      return NextResponse.json({ subtitleSource: "none" });
+    }
+
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

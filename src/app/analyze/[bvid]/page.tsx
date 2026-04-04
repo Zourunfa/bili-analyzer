@@ -53,6 +53,8 @@ export default function AnalyzePage() {
   const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<"summary" | "chat">("summary");
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcribeStep, setTranscribeStep] = useState<string>("");
 
   // 节流：摘要每 150ms 更新一次 ReactMarkdown
   const [displaySummary, setDisplaySummary] = useState("");
@@ -71,6 +73,37 @@ export default function AnalyzePage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // 生成 AI 摘要（流式）
+  const generateSummary = async (text: string) => {
+    setSummaryLoading(true);
+    try {
+      const sumRes = await fetch("/api/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subtitleText: text }),
+      });
+      if (!sumRes.ok) {
+        setError("生成摘要失败");
+        return;
+      }
+      const reader = sumRes.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        let acc = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          acc += decoder.decode(value, { stream: true });
+          setSummary(acc);
+        }
+      }
+    } catch {
+      setError("生成摘要失败");
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
 
   // 获取视频信息
   useEffect(() => {
@@ -107,36 +140,43 @@ export default function AnalyzePage() {
           setError(subData.error);
           return;
         }
-        setSubtitleText(subData.text);
 
-        // 自动生成摘要
-        setSummaryLoading(true);
-        const sumRes = await fetch("/api/summarize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subtitleText: subData.text }),
-        });
-        if (!sumRes.ok) {
-          setError("生成摘要失败");
-          setSummaryLoading(false);
+        // 有 CC 字幕，直接走摘要
+        if (subData.subtitleSource === "cc") {
+          setSubtitleText(subData.text);
+          await generateSummary(subData.text);
           return;
         }
 
-        const reader = sumRes.body?.getReader();
-        const decoder = new TextDecoder();
-        if (reader) {
-          let acc = "";
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            acc += decoder.decode(value, { stream: true });
-            setSummary(acc);
+        // 无 CC 字幕，走语音转写
+        if (subData.subtitleSource === "none") {
+          setTranscribing(true);
+          setTranscribeStep("正在下载视频...");
+          setSummaryLoading(true);
+
+          const transRes = await fetch("/api/transcribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ bvid }),
+          });
+          const transData = await transRes.json();
+
+          if (transData.error) {
+            setError("语音转写失败：" + transData.error);
+            setTranscribing(false);
+            setSummaryLoading(false);
+            return;
           }
+
+          setTranscribeStep("转写完成，正在生成摘要...");
+          setSubtitleText(transData.text);
+          setTranscribing(false);
+          await generateSummary(transData.text);
         }
-        setSummaryLoading(false);
       } catch {
         setError("处理失败，请重试");
         setSummaryLoading(false);
+        setTranscribing(false);
       }
     })();
   }, [bvid, cid]);
@@ -240,8 +280,8 @@ export default function AnalyzePage() {
           lineHeight: "52px",
         }}
       >
-        <a href="/" style={{ fontWeight: 700, fontSize: 16, color: "#1677ff" }}>
-          B站字幕分析
+        <a href="/" style={{ fontWeight: 700, fontSize: 16, color: "#1677ff", display: "flex", alignItems: "center", gap: 6 }}>
+          <ArrowLeftOutlined /> B站字幕分析
         </a>
         {videoInfo && (
           <Text type="secondary" ellipsis style={{ maxWidth: 400, fontSize: 13 }}>
@@ -250,15 +290,13 @@ export default function AnalyzePage() {
         )}
       </Header>
 
-      <Layout>
+      <Layout style={{ flex: 1, overflow: "hidden" }}>
         {/* Left Sidebar: Video Info + Subtitle */}
         <Sider
           width={360}
           style={{
             background: "#fff",
             borderRight: "1px solid #f0f0f0",
-            display: "flex",
-            flexDirection: "column",
             overflow: "hidden",
           }}
         >
@@ -300,9 +338,11 @@ export default function AnalyzePage() {
             </Text>
           </div>
           <div
+            className="subtitle-scroll"
             style={{
               flex: 1,
               overflowY: "auto",
+              minHeight: 0,
               padding: "0 16px 16px",
               fontSize: 12,
               color: "#999",
@@ -333,16 +373,13 @@ export default function AnalyzePage() {
                     {summaryLoading && !summary ? (
                       <div style={{ textAlign: "center", padding: 48 }}>
                         <Spin indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} />
-                        <div style={{ marginTop: 12, color: "#999" }}>正在生成摘要...</div>
+                        <div style={{ marginTop: 12, color: "#999" }}>
+                          {transcribing ? transcribeStep : "正在生成摘要..."}
+                        </div>
                       </div>
                     ) : (
-                      <div
-                        style={{
-                          fontSize: 14,
-                          lineHeight: 1.8,
-                        }}
-                      >
-                        <ReactMarkdown>{displaySummary}</ReactMarkdown>
+                      <div className="markdown-body">
+                        <ReactMarkdown>{displaySummary.replace(/<br\s*\/?>/gi, "\n\n")}</ReactMarkdown>
                         {summaryLoading && (
                           <span
                             style={{
@@ -440,7 +477,7 @@ export default function AnalyzePage() {
                                   }}
                                 >
                                   {msg.role === "assistant" ? (
-                                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                    <ReactMarkdown>{msg.content.replace(/<br\s*\/?>/gi, "\n\n")}</ReactMarkdown>
                                   ) : (
                                     msg.content
                                   )}
@@ -525,10 +562,60 @@ export default function AnalyzePage() {
           50% { opacity: 0; }
         }
         .ant-layout-sider { position: static !important; }
+        .ant-layout-sider-children { height: 100%; display: flex; flex-direction: column; }
+        .subtitle-scroll { flex: 1; min-height: 0; overflow-y: auto; }
         .ant-tabs { display: flex; flex-direction: column; height: 100%; }
         .ant-tabs-content-holder { flex: 1; overflow: hidden; display: flex; }
         .ant-tabs-content { flex: 1; display: flex; flex-direction: column; height: 100%; }
         .ant-tabs-tabpane { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+        .markdown-body {
+          font-size: 14px;
+          line-height: 1.8;
+          color: #333;
+        }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3,
+        .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+          margin-top: 20px;
+          margin-bottom: 10px;
+          font-weight: 600;
+          line-height: 1.4;
+        }
+        .markdown-body h1 { font-size: 20px; }
+        .markdown-body h2 { font-size: 17px; }
+        .markdown-body h3 { font-size: 15px; }
+        .markdown-body p {
+          margin-bottom: 12px;
+        }
+        .markdown-body ul, .markdown-body ol {
+          padding-left: 20px;
+          margin-bottom: 12px;
+        }
+        .markdown-body li {
+          margin-bottom: 6px;
+        }
+        .markdown-body strong {
+          font-weight: 600;
+          color: #111;
+        }
+        .markdown-body blockquote {
+          margin: 12px 0;
+          padding: 8px 16px;
+          border-left: 3px solid #1677ff;
+          background: #f6f8fa;
+          color: #666;
+        }
+        .markdown-body code {
+          background: #f0f0f0;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 13px;
+        }
+        .markdown-body hr {
+          margin: 16px 0;
+          border: none;
+          border-top: 1px solid #e8e8e8;
+        }
       `}</style>
     </Layout>
   );
