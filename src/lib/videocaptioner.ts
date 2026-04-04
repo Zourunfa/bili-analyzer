@@ -1,5 +1,5 @@
 import { execFile } from "child_process";
-import { mkdir, readFile, rm, readdir } from "fs/promises";
+import { mkdir, readFile, rm, readdir, writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
@@ -46,10 +46,17 @@ export async function downloadAudio(bvid: string): Promise<string> {
     "--no-playlist",
   ];
 
-  // 带 SESSDATA cookie 避免 B站 412 错误
+  // 写 Netscape 格式 cookie 文件，避免 B站 412 错误
   const sessdata = process.env.BILIBILI_SESSDATA;
+  let cookieFile: string | undefined;
   if (sessdata) {
-    args.push("--add-header", `Cookie: SESSDATA=${sessdata}`);
+    cookieFile = join(workDir, "cookies.txt");
+    const cookieContent = [
+      "# Netscape HTTP Cookie File",
+      `.bilibili.com\tTRUE\t/\tFALSE\t0\tSESSDATA\t${sessdata}`,
+    ].join("\n");
+    await writeFile(cookieFile, cookieContent, "utf-8");
+    args.push("--cookies", cookieFile);
   }
 
   args.push(url);
