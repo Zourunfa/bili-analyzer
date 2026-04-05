@@ -1,4 +1,7 @@
 import { createHash } from "crypto";
+import { mkdir, writeFile } from "fs/promises";
+import { join } from "path";
+import { randomUUID } from "crypto";
 
 const BILIBILI_API_BASE = "https://api.bilibili.com";
 
@@ -204,4 +207,71 @@ function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
+/**
+ * 通过 B站 API 直接获取音频流并下载（绕过 yt-dlp 的 412 问题）
+ */
+export async function downloadAudioViaApi(
+  bvid: string,
+  cid: number
+): Promise<string> {
+  const { imgKey, subKey } = await getWbiKeys();
+
+  // 请求 DASH 格式的视频流信息
+  const params: Record<string, string> = {
+    bvid,
+    cid: cid.toString(),
+    fnval: "16",       // 请求 DASH 格式
+    fourk: "1",
+  };
+
+  const query = signWbiParams(params, imgKey, subKey);
+  const url = `${BILIBILI_API_BASE}/x/player/wbi/playurl?${query}`;
+
+  const res = await fetch(url, { headers: getHeaders() });
+  const data = await res.json();
+
+  if (data.code !== 0) {
+    throw new Error(`获取视频流地址失败: ${data.message}`);
+  }
+
+  // 从 DASH 响应中提取音频流
+  const audioList = data.data?.dash?.audio;
+  if (!audioList || audioList.length === 0) {
+    throw new Error("未找到音频流");
+  }
+
+  // 选最后一个（通常是最高音质中我们能拿到的）
+  const audio = audioList[audioList.length - 1];
+  const audioUrl = audio.baseUrl || audio.base_url;
+
+  if (!audioUrl) {
+    throw new Error("音频流 URL 为空");
+  }
+
+  // 下载音频到临时文件
+  const tmpDir = join("/tmp/bilibili-subtitle", randomUUID());
+  await mkdir(tmpDir, { recursive: true });
+  const outputPath = join(tmpDir, "audio.m4a");
+
+  console.log(`[bilibili] 开始下载音频: ${audioUrl.slice(0, 80)}...`);
+
+  const audioRes = await fetch(audioUrl, {
+    headers: {
+      ...getHeaders(),
+      Range: undefined as unknown as string, // 去掉 Range，完整下载
+    },
+  });
+
+  if (!audioRes.ok) {
+    throw new Error(`下载音频失败: HTTP ${audioRes.status}`);
+  }
+
+  const buffer = Buffer.from(await audioRes.arrayBuffer());
+  await writeFile(outputPath, buffer);
+
+  console.log(`[bilibili] 音频下载完成: ${outputPath} (${(buffer.length / 1024 / 1024).toFixed(1)}MB)`);
+
+  return outputPath;
 }

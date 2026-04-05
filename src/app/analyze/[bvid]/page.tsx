@@ -151,13 +151,13 @@ export default function AnalyzePage() {
         // 无 CC 字幕，走语音转写
         if (subData.subtitleSource === "none") {
           setTranscribing(true);
-          setTranscribeStep("正在下载视频...");
+          setTranscribeStep("正在下载音频...");
           setSummaryLoading(true);
 
           const transRes = await fetch("/api/transcribe", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bvid }),
+            body: JSON.stringify({ bvid, cid: Number(cid) }),
           });
           const transData = await transRes.json();
 
