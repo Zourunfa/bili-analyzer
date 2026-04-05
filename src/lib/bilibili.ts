@@ -259,8 +259,9 @@ export async function downloadAudioViaApi(
 
   const audioRes = await fetch(audioUrl, {
     headers: {
-      ...getHeaders(),
-      Range: undefined as unknown as string, // 去掉 Range，完整下载
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Referer: "https://www.bilibili.com",
     },
   });
 
