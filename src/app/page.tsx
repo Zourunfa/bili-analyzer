@@ -55,7 +55,7 @@ export default function Home() {
         <div style={{ textAlign: "center", marginBottom: 40 }}>
           <PlayCircleOutlined style={{ fontSize: 48, color: "#1677ff", marginBottom: 16 }} />
           <Title level={2} style={{ marginBottom: 8 }}>
-            B站字幕分析
+            B站视频分析
           </Title>
           <Paragraph type="secondary" style={{ fontSize: 16 }}>
             粘贴B站视频链接，AI 自动提取字幕并生成摘要

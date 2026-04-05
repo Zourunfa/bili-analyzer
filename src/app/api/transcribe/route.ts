@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { downloadAudioViaApi, subtitleToText } from "@/lib/bilibili";
 import { transcribeAudio, parseSrt, cleanup } from "@/lib/videocaptioner";
 
@@ -6,44 +6,72 @@ export async function POST(req: NextRequest) {
   const { bvid, cid } = await req.json();
 
   if (!bvid || !cid) {
-    return NextResponse.json({ error: "缺少 bvid 或 cid" }, { status: 400 });
+    return new Response(JSON.stringify({ error: "缺少 bvid 或 cid" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
+  const encoder = new TextEncoder();
   let audioPath: string | undefined;
   let workDir: string | undefined;
 
-  try {
-    // Step 1: 通过 B站 API 直接下载音频（绕过 yt-dlp 412 问题）
-    console.log(`[transcribe] 开始下载音频: ${bvid}`);
-    audioPath = await downloadAudioViaApi(bvid, cid);
-    workDir = audioPath.substring(0, audioPath.lastIndexOf("/"));
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (data: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+      };
 
-    // Step 2: 语音转写
-    console.log(`[transcribe] 开始语音转写: ${audioPath}`);
-    const srtText = await transcribeAudio(audioPath);
+      try {
+        // Step 1: 下载音频（带进度）
+        send({ type: "status", message: "正在下载音频..." });
 
-    if (!srtText.trim()) {
-      return NextResponse.json({ error: "语音转写结果为空" }, { status: 500 });
-    }
+        audioPath = await downloadAudioViaApi(bvid, cid, (percent, downloaded, total) => {
+          send({ type: "progress", percent, downloaded, total });
+        });
 
-    // Step 3: 解析 SRT 为统一格式
-    const subtitles = parseSrt(srtText);
-    const text = subtitleToText(subtitles);
+        workDir = audioPath.substring(0, audioPath.lastIndexOf("/"));
 
-    console.log(`[transcribe] 完成，共 ${subtitles.length} 条字幕`);
+        // Step 2: 语音转写
+        send({ type: "status", message: "正在语音转写..." });
 
-    return NextResponse.json({
-      subtitles,
-      text,
-      count: subtitles.length,
-      subtitleSource: "transcribed",
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "转写失败";
-    console.error(`[transcribe] Error: ${message}`);
-    return NextResponse.json({ error: message }, { status: 500 });
-  } finally {
-    if (audioPath) await cleanup(audioPath);
-    if (workDir) await cleanup(workDir);
-  }
+        const srtText = await transcribeAudio(audioPath);
+
+        if (!srtText.trim()) {
+          send({ type: "error", error: "语音转写结果为空" });
+          controller.close();
+          return;
+        }
+
+        // Step 3: 解析 SRT
+        const subtitles = parseSrt(srtText);
+        const text = subtitleToText(subtitles);
+
+        send({
+          type: "done",
+          data: {
+            subtitles,
+            text,
+            count: subtitles.length,
+            subtitleSource: "transcribed",
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "转写失败";
+        send({ type: "error", error: message });
+      } finally {
+        if (audioPath) await cleanup(audioPath);
+        if (workDir) await cleanup(workDir);
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }

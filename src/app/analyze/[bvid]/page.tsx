@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { Layout, Card, Tabs, Input, Button, Spin, Empty, Typography, Space, Tag, Divider } from "antd";
+import { Layout, Card, Tabs, Input, Button, Spin, Empty, Typography, Space, Tag, Divider, Progress } from "antd";
 import {
   SendOutlined,
   RobotOutlined,
@@ -14,6 +14,7 @@ import {
   LoadingOutlined,
 } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
+import { marked } from "marked";
 
 const { Header, Sider, Content } = Layout;
 const { TextArea } = Input;
@@ -55,19 +56,8 @@ export default function AnalyzePage() {
   const [activeTab, setActiveTab] = useState<"summary" | "chat">("summary");
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeStep, setTranscribeStep] = useState<string>("");
-
-  // 节流：摘要每 150ms 更新一次 ReactMarkdown
-  const [displaySummary, setDisplaySummary] = useState("");
-  const summaryTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
-  useEffect(() => {
-    if (summaryTimerRef.current) clearTimeout(summaryTimerRef.current);
-    summaryTimerRef.current = setTimeout(() => {
-      setDisplaySummary(summary);
-    }, 150);
-    return () => {
-      if (summaryTimerRef.current) clearTimeout(summaryTimerRef.current);
-    };
-  }, [summary]);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadSize, setDownloadSize] = useState("");
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -148,10 +138,12 @@ export default function AnalyzePage() {
           return;
         }
 
-        // 无 CC 字幕，走语音转写
+        // 无 CC 字幕，走语音转写（SSE 流式获取进度）
         if (subData.subtitleSource === "none") {
           setTranscribing(true);
           setTranscribeStep("正在下载音频...");
+          setDownloadProgress(0);
+          setDownloadSize("");
           setSummaryLoading(true);
 
           const transRes = await fetch("/api/transcribe", {
@@ -159,19 +151,47 @@ export default function AnalyzePage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ bvid, cid: Number(cid) }),
           });
-          const transData = await transRes.json();
 
-          if (transData.error) {
-            setError("语音转写失败：" + transData.error);
-            setTranscribing(false);
-            setSummaryLoading(false);
-            return;
+          const reader = transRes.body?.getReader();
+          const decoder = new TextDecoder();
+          let sseBuffer = "";
+
+          if (reader) {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              sseBuffer += decoder.decode(value, { stream: true });
+
+              // 解析 SSE 行
+              const lines = sseBuffer.split("\n");
+              sseBuffer = lines.pop() || "";
+
+              for (const line of lines) {
+                if (!line.startsWith("data: ")) continue;
+                try {
+                  const event = JSON.parse(line.slice(6));
+                  if (event.type === "progress") {
+                    setDownloadProgress(event.percent);
+                    setDownloadSize(`${event.downloaded} / ${event.total} MB`);
+                    setTranscribeStep(`正在下载音频 ${event.percent}%`);
+                  } else if (event.type === "status") {
+                    setTranscribeStep(event.message);
+                  } else if (event.type === "error") {
+                    setError("语音转写失败：" + event.error);
+                    setTranscribing(false);
+                    setSummaryLoading(false);
+                    return;
+                  } else if (event.type === "done") {
+                    const transData = event.data;
+                    setTranscribeStep("转写完成，正在生成摘要...");
+                    setSubtitleText(transData.text);
+                    setTranscribing(false);
+                    await generateSummary(transData.text);
+                  }
+                } catch { /* skip invalid JSON */ }
+              }
+            }
           }
-
-          setTranscribeStep("转写完成，正在生成摘要...");
-          setSubtitleText(transData.text);
-          setTranscribing(false);
-          await generateSummary(transData.text);
         }
       } catch {
         setError("处理失败，请重试");
@@ -281,7 +301,7 @@ export default function AnalyzePage() {
         }}
       >
         <a href="/" style={{ fontWeight: 700, fontSize: 16, color: "#1677ff", display: "flex", alignItems: "center", gap: 6 }}>
-          <ArrowLeftOutlined /> B站字幕分析
+          <ArrowLeftOutlined /> B站视频分析
         </a>
         {videoInfo && (
           <Text type="secondary" ellipsis style={{ maxWidth: 400, fontSize: 13 }}>
@@ -376,24 +396,25 @@ export default function AnalyzePage() {
                         <div style={{ marginTop: 12, color: "#999" }}>
                           {transcribing ? transcribeStep : "正在生成摘要..."}
                         </div>
-                      </div>
-                    ) : (
-                      <div className="markdown-body">
-                        <ReactMarkdown>{displaySummary.replace(/<br\s*\/?>/gi, "\n\n")}</ReactMarkdown>
-                        {summaryLoading && (
-                          <span
-                            style={{
-                              display: "inline-block",
-                              width: 3,
-                              height: "1em",
-                              background: "#1677ff",
-                              animation: "blink 1s infinite",
-                              verticalAlign: "middle",
-                              marginLeft: 2,
-                            }}
-                          />
+                        {transcribing && downloadProgress > 0 && (
+                          <div style={{ maxWidth: 320, margin: "16px auto 0" }}>
+                            <Progress percent={downloadProgress} size="small" />
+                            {downloadSize && (
+                              <div style={{ fontSize: 12, color: "#bbb", marginTop: 4 }}>{downloadSize}</div>
+                            )}
+                          </div>
                         )}
                       </div>
+                    ) : (
+                      <div
+                        className="markdown-body"
+                        dangerouslySetInnerHTML={{
+                          __html: marked.parse(summary.replace(/<br\s*\/?>/gi, "\n")) +
+                            (summaryLoading
+                              ? '<span class="cursor-blink"></span>'
+                              : ""),
+                        }}
+                      />
                     )}
                   </div>
                 ),
@@ -561,6 +582,15 @@ export default function AnalyzePage() {
           0%, 100% { opacity: 1; }
           50% { opacity: 0; }
         }
+        .cursor-blink {
+          display: inline-block;
+          width: 2px;
+          height: 1em;
+          background: #1677ff;
+          animation: blink 1s infinite;
+          vertical-align: middle;
+          margin-left: 2px;
+        }
         .ant-layout-sider { position: static !important; }
         .ant-layout-sider-children { height: 100%; display: flex; flex-direction: column; }
         .subtitle-scroll { flex: 1; min-height: 0; overflow-y: auto; }
@@ -568,6 +598,17 @@ export default function AnalyzePage() {
         .ant-tabs-content-holder { flex: 1; overflow: hidden; display: flex; }
         .ant-tabs-content { flex: 1; display: flex; flex-direction: column; height: 100%; }
         .ant-tabs-tabpane { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* Tab bar styles */
+        .ant-tabs-nav { padding: 0 24px; border-bottom: 1px solid #f0f0f0; margin-bottom: 0; }
+        .ant-tabs-tab { padding: 12px 20px; font-size: 14px; transition: all 0.2s; border-radius: 8px 8px 0 0; }
+        .ant-tabs-tab + .ant-tabs-tab { margin-left: 4px; }
+        .ant-tabs-tab .anticon { margin-right: 6px; color: #999; transition: color 0.2s; }
+        .ant-tabs-tab:hover { color: #1677ff; background: #f0f5ff; }
+        .ant-tabs-tab:hover .anticon { color: #1677ff; }
+        .ant-tabs-tab-active .anticon { color: #1677ff; }
+        .ant-tabs-tab-active { font-weight: 600; }
+        .ant-tabs-ink-bar { height: 3px; border-radius: 2px; background: #1677ff; }
 
         .markdown-body {
           font-size: 14px;

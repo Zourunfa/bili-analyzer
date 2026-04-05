@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "B站字幕分析",
+  title: "B站视频分析",
   description: "粘贴B站视频链接，AI 自动提取字幕并生成摘要，支持对话追问",
 };
 

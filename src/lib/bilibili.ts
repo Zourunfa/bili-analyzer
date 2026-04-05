@@ -1,7 +1,8 @@
 import { createHash } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, writeFile, createWriteStream } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
+import { Writable } from "stream";
 
 const BILIBILI_API_BASE = "https://api.bilibili.com";
 
@@ -211,10 +212,12 @@ function formatTime(seconds: number): string {
 
 /**
  * 通过 B站 API 直接获取音频流并下载（绕过 yt-dlp 的 412 问题）
+ * onProgress: (percent: number, downloadedMB: string, totalMB: string) => void
  */
 export async function downloadAudioViaApi(
   bvid: string,
-  cid: number
+  cid: number,
+  onProgress?: (percent: number, downloaded: string, total: string) => void
 ): Promise<string> {
   const { imgKey, subKey } = await getWbiKeys();
 
@@ -269,10 +272,32 @@ export async function downloadAudioViaApi(
     throw new Error(`下载音频失败: HTTP ${audioRes.status}`);
   }
 
-  const buffer = Buffer.from(await audioRes.arrayBuffer());
-  await writeFile(outputPath, buffer);
+  // 流式下载，支持进度回调
+  const contentLength = parseInt(audioRes.headers.get("content-length") || "0", 10);
+  const totalMB = contentLength ? (contentLength / 1024 / 1024).toFixed(1) : "?";
+  let downloaded = 0;
 
-  console.log(`[bilibili] 音频下载完成: ${outputPath} (${(buffer.length / 1024 / 1024).toFixed(1)}MB)`);
+  const fileStream = (await import("fs")).createWriteStream(outputPath);
+  const reader = audioRes.body?.getReader();
+
+  if (!reader) {
+    throw new Error("无法读取音频流");
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    fileStream.write(value);
+    downloaded += value.length;
+    if (onProgress && contentLength) {
+      const percent = Math.round((downloaded / contentLength) * 100);
+      onProgress(percent, (downloaded / 1024 / 1024).toFixed(1), totalMB);
+    }
+  }
+
+  fileStream.end();
+
+  console.log(`[bilibili] 音频下载完成: ${outputPath} (${(downloaded / 1024 / 1024).toFixed(1)}MB)`);
 
   return outputPath;
 }
