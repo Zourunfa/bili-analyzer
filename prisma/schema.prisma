@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// 用户表
+model User {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  name      String
+  avatar    String?
+  password  String     // bcrypt 哈希
+  notebooks Notebook[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@map("users")
+}
+
+// 笔记本
+model Notebook {
+  id          String          @id @default(cuid())
+  userId      String
+  title       String
+  description String?
+  coverImage  String?
+  tags        String[]
+  videoCount  Int             @default(0)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videos      NotebookVideo[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([userId])
+  @@map("notebooks")
+}
+
+// 视频
+model Video {
+  id                  String           @id @default(cuid())
+  bvid                String           @unique
+  title               String
+  pic                 String?
+  desc                String?
+  duration            Int
+  ownerName           String           @map("owner_name")
+  ownerMid            String           @map("owner_mid")
+  cid                 String?
+  subtitleText        String           @map("subtitle_text")
+  subtitleSource      String           @default("cc") @map("subtitle_source")
+  summary             String?
+  knowledgeExtracted  Boolean          @default(false) @map("knowledge_extracted")
+  notebookVideos      NotebookVideo[]
+  knowledgePoints     KnowledgePoint[]
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  @@index([ownerMid])
+  @@map("videos")
+}
+
+// 笔记本-视频关联
+model NotebookVideo {
+  id         String   @id @default(cuid())
+  notebookId String   @map("notebook_id")
+  videoId    String   @map("video_id")
+  notes      String?
+  order      Int      @default(0)
+  notebook   Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
+  video      Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  addedAt    DateTime @default(now()) @map("added_at")
+
+  @@unique([notebookId, videoId])
+  @@index([notebookId])
+  @@index([videoId])
+  @@map("notebook_videos")
+}
+
+// 知识点
+model KnowledgePoint {
+  id        String     @id @default(cuid())
+  videoId   String     @map("video_id")
+  type      String     // topic | keyPoint | concept | qaPair
+  content   String
+  timestamp Int?
+  metadata  Json?
+  video     Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  embedding Embedding?
+  createdAt DateTime   @default(now())
+
+  @@index([videoId])
+  @@index([type])
+  @@map("knowledge_points")
+}
+
+// 向量嵌入
+model Embedding {
+  id                String          @id @default(cuid())
+  knowledgePointId  String          @unique @map("knowledge_point_id")
+  vector            Unsupported("vector(1024)")
+  knowledgePoint    KnowledgePoint  @relation(fields: [knowledgePointId], references: [id], onDelete: Cascade)
+  createdAt         DateTime        @default(now())
+
+  @@map("embeddings")
+}
+
+// UP主档案
+model UPProfile {
+  id           String    @id @default(cuid())
+  mid          String    @unique
+  name         String
+  face         String?
+  sign         String?
+  videoCount   Int?      @map("video_count")
+  lastSyncedAt DateTime? @map("last_synced_at")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("up_profiles")
+}

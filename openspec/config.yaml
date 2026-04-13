@@ -1,0 +1,30 @@
+schema: spec-driven
+
+context: |
+  技术栈：TypeScript, Next.js 16 (App Router), React 19, Ant Design 6, Tailwind CSS 4
+  AI/LLM：Vercel AI SDK 6, DashScope (Qwen 模型), text-embedding-v3
+  数据库：PostgreSQL + pgvector（规划中）
+  ORM：Prisma（规划中）
+  认证：NextAuth.js（规划中）
+  域名：B站视频知识管理平台
+  产品名：视记 VideoNote
+  现有能力：B站视频信息获取(WBI签名)、CC字幕提取、音频下载+Whisper转写、AI摘要(流式)、字幕对话(流式)
+  API风格：RESTful, Next.js Route Handlers (app/api/)
+  部署：Vercel + 阿里云服务器
+  约定：
+    - 中文优先的UI和文档
+    - 流式响应(SSE)用于AI生成
+    - Ant Design组件库
+    - CSS-in-JS (styled jsx global) + Tailwind
+
+rules:
+  proposal:
+    - 所有proposal必须包含「非目标」章节
+    - proposal控制在800字以内
+  tasks:
+    - 每个task粒度为1-4小时工作量
+    - tasks按依赖顺序排列
+    - 明确标注优先级(P0/P1/P2)
+  design:
+    - 必须包含数据模型设计
+    - 必须考虑现有代码的复用

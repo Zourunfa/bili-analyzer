@@ -1,0 +1,1684 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B站视频知识管理平台 — 后端架构</title>
+<style>
+  :root {
+    --bg: #0a0e17;
+    --bg2: #111827;
+    --bg3: #1e293b;
+    --text: #e2e8f0;
+    --text2: #94a3b8;
+    --accent: #38bdf8;
+    --accent2: #818cf8;
+    --accent3: #34d399;
+    --accent4: #fb923c;
+    --accent5: #f472b6;
+    --border: #1e293b;
+    --glow: rgba(56, 189, 248, 0.15);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans SC', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    overflow-x: hidden;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--accent); border-radius: 3px; }
+
+  /* Nav */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    background: rgba(10, 14, 23, 0.85);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 60px;
+    transition: transform 0.3s;
+  }
+  nav .logo { font-weight: 700; font-size: 1.1rem; color: var(--accent); }
+  nav .links { display: flex; gap: 1.5rem; }
+  nav .links a {
+    color: var(--text2); text-decoration: none; font-size: 0.85rem;
+    transition: color 0.2s;
+  }
+  nav .links a:hover { color: var(--accent); }
+
+  /* Hero */
+  .hero {
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    padding: 2rem; position: relative;
+  }
+  .hero::before {
+    content: ''; position: absolute; inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% 40%, rgba(56,189,248,0.08), transparent);
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    padding: 0.4rem 1rem; border-radius: 999px;
+    background: rgba(56,189,248,0.1); border: 1px solid rgba(56,189,248,0.2);
+    color: var(--accent); font-size: 0.8rem; margin-bottom: 2rem;
+    animation: fadeDown 0.8s ease-out;
+  }
+  .hero h1 {
+    font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--accent2), var(--accent5));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin-bottom: 1rem; animation: fadeUp 0.8s ease-out 0.1s both;
+  }
+  .hero p {
+    font-size: 1.15rem; color: var(--text2); max-width: 600px;
+    animation: fadeUp 0.8s ease-out 0.2s both;
+  }
+  .hero-flow {
+    margin-top: 3rem; display: flex; align-items: center; gap: 0.5rem;
+    flex-wrap: wrap; justify-content: center;
+    animation: fadeUp 0.8s ease-out 0.3s both;
+  }
+  .hero-flow .step {
+    padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.8rem;
+    background: var(--bg3); border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .hero-flow .arrow { color: var(--accent); font-size: 1.2rem; }
+  .hero-flow .step:nth-child(odd) { border-color: var(--accent); color: var(--accent); }
+  .hero-flow .step:nth-child(even) { border-color: var(--accent3); color: var(--accent3); }
+
+  .scroll-hint {
+    position: absolute; bottom: 2rem; color: var(--text2); font-size: 0.8rem;
+    animation: bounce 2s infinite;
+  }
+
+  /* Sections */
+  section {
+    max-width: 1100px; margin: 0 auto; padding: 6rem 2rem;
+    opacity: 0; transform: translateY(40px);
+    transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+  }
+  section.visible { opacity: 1; transform: translateY(0); }
+
+  .section-label {
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--accent); margin-bottom: 0.5rem;
+  }
+  .section-title {
+    font-size: 2rem; font-weight: 700; margin-bottom: 1rem;
+  }
+  .section-desc {
+    color: var(--text2); margin-bottom: 3rem; font-size: 1rem;
+  }
+
+  /* Architecture Diagram */
+  .arch-diagram {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 16px; padding: 2rem; position: relative;
+    overflow: hidden;
+  }
+  .arch-layer {
+    border: 1px solid var(--border); border-radius: 12px;
+    padding: 1.5rem; margin-bottom: 0; position: relative;
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  .arch-layer:hover { border-color: var(--accent); box-shadow: 0 0 30px var(--glow); }
+  .arch-layer-title {
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--text2); margin-bottom: 1rem;
+  }
+  .arch-boxes { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .arch-box {
+    flex: 1; min-width: 140px; padding: 0.8rem 1rem;
+    border-radius: 8px; font-size: 0.8rem; text-align: center;
+    border: 1px solid var(--border); background: var(--bg);
+    transition: transform 0.2s, border-color 0.3s;
+  }
+  .arch-box:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .arch-box .box-icon { font-size: 1.3rem; margin-bottom: 0.3rem; }
+  .arch-box .box-label { color: var(--text2); font-size: 0.7rem; }
+
+  .arch-connector {
+    display: flex; justify-content: center; padding: 0.6rem 0;
+    color: var(--accent); font-size: 1.2rem;
+  }
+
+  /* Color variants */
+  .c-blue { border-color: rgba(56,189,248,0.3); }
+  .c-blue:hover { border-color: var(--accent); }
+  .c-purple { border-color: rgba(129,140,248,0.3); }
+  .c-purple:hover { border-color: var(--accent2); }
+  .c-green { border-color: rgba(52,211,153,0.3); }
+  .c-green:hover { border-color: var(--accent3); }
+  .c-orange { border-color: rgba(251,146,60,0.3); }
+  .c-orange:hover { border-color: var(--accent4); }
+  .c-pink { border-color: rgba(244,114,182,0.3); }
+  .c-pink:hover { border-color: var(--accent5); }
+
+  /* Tech Table */
+  .tech-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem;
+  }
+  .tech-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem;
+    transition: transform 0.2s, border-color 0.3s;
+    opacity: 0; transform: translateY(20px);
+  }
+  .tech-card.visible { opacity: 1; transform: translateY(0); }
+  .tech-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+  .tech-card .tech-name {
+    font-weight: 700; font-size: 1rem; margin-bottom: 0.3rem;
+  }
+  .tech-card .tech-role {
+    color: var(--accent); font-size: 0.8rem; margin-bottom: 0.5rem;
+  }
+  .tech-card .tech-why {
+    color: var(--text2); font-size: 0.82rem;
+  }
+
+  /* Directory Tree */
+  .dir-tree {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem 2rem;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.82rem;
+    line-height: 1.9;
+    overflow-x: auto;
+  }
+  .dir-tree .dir { color: var(--accent); }
+  .dir-tree .comment { color: var(--text2); font-style: italic; }
+
+  /* ER Diagram */
+  .er-diagram {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 16px; padding: 2rem; overflow-x: auto;
+  }
+  .er-entities {
+    display: flex; gap: 2rem; flex-wrap: wrap; justify-content: center;
+    align-items: flex-start;
+  }
+  .er-entity {
+    min-width: 200px; max-width: 260px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.3s;
+    opacity: 0; transform: translateY(20px) scale(0.95);
+  }
+  .er-entity.visible { opacity: 1; transform: translateY(0) scale(1); }
+  .er-entity:hover { transform: translateY(-4px); box-shadow: 0 8px 30px rgba(0,0,0,0.3); }
+  .er-entity-header {
+    padding: 0.8rem 1rem; font-weight: 700; font-size: 0.9rem;
+    text-align: center;
+  }
+  .er-entity-header.h-blue { background: rgba(56,189,248,0.1); color: var(--accent); border-bottom: 2px solid var(--accent); }
+  .er-entity-header.h-purple { background: rgba(129,140,248,0.1); color: var(--accent2); border-bottom: 2px solid var(--accent2); }
+  .er-entity-header.h-green { background: rgba(52,211,153,0.1); color: var(--accent3); border-bottom: 2px solid var(--accent3); }
+  .er-entity-header.h-orange { background: rgba(251,146,60,0.1); color: var(--accent4); border-bottom: 2px solid var(--accent4); }
+  .er-entity-header.h-pink { background: rgba(244,114,182,0.1); color: var(--accent5); border-bottom: 2px solid var(--accent5); }
+  .er-field {
+    padding: 0.4rem 1rem; font-size: 0.78rem;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between;
+  }
+  .er-field:last-child { border-bottom: none; }
+  .er-field .fname { color: var(--text); }
+  .er-field .ftype { color: var(--text2); font-size: 0.72rem; }
+  .er-field .fk { color: var(--accent4); font-size: 0.7rem; }
+
+  .er-relation {
+    text-align: center; padding: 1rem 0; color: var(--text2); font-size: 0.82rem;
+  }
+  .er-relation .rel-label {
+    display: inline-block; padding: 0.3rem 0.8rem; border-radius: 999px;
+    background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.15);
+    font-size: 0.75rem;
+  }
+
+  /* Code Block */
+  .code-block {
+    background: #0d1117; border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden; margin: 1.5rem 0;
+  }
+  .code-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.6rem 1rem; background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid var(--border);
+  }
+  .code-dots { display: flex; gap: 6px; }
+  .code-dots span { width: 10px; height: 10px; border-radius: 50%; }
+  .code-dots span:nth-child(1) { background: #ff5f57; }
+  .code-dots span:nth-child(2) { background: #febc2e; }
+  .code-dots span:nth-child(3) { background: #28c840; }
+  .code-filename { color: var(--text2); font-size: 0.75rem; font-family: monospace; }
+  .code-body {
+    padding: 1rem 1.2rem; font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.8rem; line-height: 1.7; overflow-x: auto;
+    white-space: pre;
+  }
+  .code-body .kw { color: #ff7b72; }
+  .code-body .fn { color: #d2a8ff; }
+  .code-body .str { color: #a5d6ff; }
+  .code-body .cmt { color: #8b949e; }
+  .code-body .type { color: #79c0ff; }
+  .code-body .num { color: #79c0ff; }
+  .code-body .prop { color: #ffa657; }
+  .code-body .op { color: #ff7b72; }
+
+  /* Note */
+  .note {
+    background: rgba(56,189,248,0.05); border-left: 3px solid var(--accent);
+    padding: 1rem 1.2rem; border-radius: 0 8px 8px 0;
+    font-size: 0.85rem; color: var(--text2); margin: 1.5rem 0;
+  }
+  .note strong { color: var(--accent); }
+
+  /* Flow Diagram */
+  .flow-container {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 16px; padding: 2rem; overflow-x: auto;
+  }
+  .flow {
+    display: flex; flex-direction: column; align-items: center; gap: 0;
+  }
+  .flow-row {
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    justify-content: center;
+  }
+  .flow-node {
+    padding: 0.7rem 1.2rem; border-radius: 8px; font-size: 0.8rem;
+    border: 1px solid var(--border); background: var(--bg);
+    text-align: center; min-width: 160px;
+    transition: transform 0.2s, box-shadow 0.3s;
+    opacity: 0;
+  }
+  .flow-node.visible { opacity: 1; }
+  .flow-node:hover { transform: scale(1.03); box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+  .flow-node .fn-title { font-weight: 600; margin-bottom: 0.2rem; }
+  .flow-node .fn-sub { font-size: 0.7rem; color: var(--text2); }
+  .flow-node.n-blue { border-color: rgba(56,189,248,0.4); }
+  .flow-node.n-blue .fn-title { color: var(--accent); }
+  .flow-node.n-green { border-color: rgba(52,211,153,0.4); }
+  .flow-node.n-green .fn-title { color: var(--accent3); }
+  .flow-node.n-purple { border-color: rgba(129,140,248,0.4); }
+  .flow-node.n-purple .fn-title { color: var(--accent2); }
+  .flow-node.n-orange { border-color: rgba(251,146,60,0.4); }
+  .flow-node.n-orange .fn-title { color: var(--accent4); }
+  .flow-node.n-pink { border-color: rgba(244,114,182,0.4); }
+  .flow-node.n-pink .fn-title { color: var(--accent5); }
+
+  .flow-arrow {
+    color: var(--accent); font-size: 1.2rem; padding: 0.3rem 0;
+    opacity: 0;
+  }
+  .flow-arrow.visible { opacity: 1; }
+
+  .flow-branch {
+    display: flex; gap: 2rem; align-items: flex-start;
+    flex-wrap: wrap; justify-content: center;
+  }
+  .flow-branch-label {
+    font-size: 0.7rem; color: var(--accent4); padding: 0.2rem 0.6rem;
+    background: rgba(251,146,60,0.1); border-radius: 4px;
+  }
+
+  /* Comparison Table */
+  .compare-table {
+    width: 100%; border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  .compare-table th {
+    text-align: left; padding: 0.8rem 1rem;
+    background: var(--bg3); color: var(--accent);
+    border-bottom: 2px solid var(--border);
+    font-size: 0.78rem; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .compare-table td {
+    padding: 0.7rem 1rem; border-bottom: 1px solid var(--border);
+    color: var(--text2);
+  }
+  .compare-table tr:hover td { background: rgba(56,189,248,0.03); color: var(--text); }
+
+  /* Feature cards */
+  .feature-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+  }
+  .feature-card {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem;
+    transition: transform 0.2s, border-color 0.3s;
+    opacity: 0; transform: translateY(20px);
+  }
+  .feature-card.visible { opacity: 1; transform: translateY(0); }
+  .feature-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+  .feature-card .fc-icon { font-size: 1.8rem; margin-bottom: 0.5rem; }
+  .feature-card .fc-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.3rem; }
+  .feature-card .fc-desc { color: var(--text2); font-size: 0.82rem; }
+
+  /* Auth flow animated */
+  .auth-flow-visual {
+    display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center;
+    margin: 2rem 0;
+  }
+  .auth-step {
+    padding: 0.8rem 1.2rem; border-radius: 10px; font-size: 0.8rem;
+    border: 1px solid var(--border); background: var(--bg);
+    text-align: center; min-width: 120px; position: relative;
+    opacity: 0; transform: scale(0.8);
+    transition: opacity 0.5s, transform 0.5s;
+  }
+  .auth-step.visible { opacity: 1; transform: scale(1); }
+  .auth-step .as-icon { font-size: 1.4rem; margin-bottom: 0.3rem; }
+  .auth-step .as-label { font-weight: 600; }
+  .auth-step .as-sub { font-size: 0.7rem; color: var(--text2); }
+  .auth-connector {
+    display: flex; align-items: center; color: var(--accent);
+    font-size: 1.3rem; opacity: 0;
+    transition: opacity 0.5s 0.3s;
+  }
+  .auth-connector.visible { opacity: 1; }
+
+  /* Search compare */
+  .search-compare {
+    display: grid; grid-template-columns: 1fr auto 1fr;
+    gap: 0; align-items: stretch;
+    margin: 2rem 0;
+  }
+  .search-side {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 1.5rem;
+  }
+  .search-side h4 { margin-bottom: 0.8rem; font-size: 0.95rem; }
+  .search-side ul { list-style: none; padding: 0; }
+  .search-side li {
+    padding: 0.4rem 0; font-size: 0.82rem; color: var(--text2);
+    border-bottom: 1px solid var(--border);
+  }
+  .search-side li:last-child { border-bottom: none; }
+  .search-vs {
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; color: var(--accent); font-size: 1.2rem;
+    padding: 0 1.5rem;
+  }
+
+  /* Vector animation */
+  .vector-anim {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 1rem; padding: 2rem 0;
+  }
+  .vector-step {
+    display: flex; align-items: center; gap: 1rem;
+    opacity: 0; transform: translateX(-20px);
+    transition: opacity 0.5s, transform 0.5s;
+  }
+  .vector-step.visible { opacity: 1; transform: translateX(0); }
+  .vector-step .vs-icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem; flex-shrink: 0;
+  }
+  .vector-step .vs-text { font-size: 0.85rem; }
+  .vector-step .vs-sub { font-size: 0.75rem; color: var(--text2); }
+  .vector-arrow-down {
+    color: var(--accent); font-size: 1.2rem;
+    opacity: 0; transition: opacity 0.5s;
+  }
+  .vector-arrow-down.visible { opacity: 1; }
+
+  /* Learning path */
+  .learning-path {
+    position: relative; padding-left: 2rem;
+  }
+  .learning-path::before {
+    content: ''; position: absolute; left: 11px; top: 0; bottom: 0;
+    width: 2px; background: linear-gradient(to bottom, var(--accent), var(--accent2), var(--accent5));
+    border-radius: 1px;
+  }
+  .lp-item {
+    position: relative; margin-bottom: 2rem;
+    opacity: 0; transform: translateX(-20px);
+    transition: opacity 0.5s, transform 0.5s;
+  }
+  .lp-item.visible { opacity: 1; transform: translateX(0); }
+  .lp-item::before {
+    content: ''; position: absolute; left: -2rem; top: 0.5rem;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent); border: 2px solid var(--bg);
+  }
+  .lp-item:nth-child(2)::before { background: var(--accent2); }
+  .lp-item:nth-child(3)::before { background: var(--accent4); }
+  .lp-item:nth-child(4)::before { background: var(--accent5); }
+  .lp-stage {
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--accent); margin-bottom: 0.3rem;
+  }
+  .lp-title { font-weight: 600; font-size: 1rem; margin-bottom: 0.3rem; }
+  .lp-items { color: var(--text2); font-size: 0.82rem; }
+  .lp-items span { color: var(--accent3); }
+
+  /* Two-col layout */
+  .two-col {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;
+  }
+  @media (max-width: 768px) {
+    .two-col { grid-template-columns: 1fr; }
+    .search-compare { grid-template-columns: 1fr; }
+    .search-vs { padding: 0.5rem 0; }
+    nav .links { display: none; }
+  }
+
+  /* Animated background particles */
+  .particles {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  }
+  .particle {
+    position: absolute; border-radius: 50%;
+    animation: float linear infinite;
+    opacity: 0.15;
+  }
+
+  /* Keyframes */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+  }
+  @keyframes float {
+    0% { transform: translateY(100vh) rotate(0deg); }
+    100% { transform: translateY(-10vh) rotate(360deg); }
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(56,189,248,0.2); }
+    50% { box-shadow: 0 0 0 8px rgba(56,189,248,0); }
+  }
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes typing {
+    from { width: 0; }
+    to { width: 100%; }
+  }
+  @keyframes dataFlow {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+
+  .data-flow-line {
+    height: 3px; border-radius: 2px; margin: 0.5rem 0;
+    background: linear-gradient(90deg, var(--accent), var(--accent2), var(--accent), var(--accent2));
+    background-size: 200% 100%;
+    animation: dataFlow 2s linear infinite;
+  }
+
+  /* Progress bar for sections */
+  .progress-bar {
+    position: fixed; top: 60px; left: 0; height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    z-index: 101; transition: width 0.1s;
+  }
+
+  /* Footer */
+  footer {
+    text-align: center; padding: 3rem 2rem; color: var(--text2);
+    font-size: 0.8rem; border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<div class="particles" id="particles"></div>
+<div class="progress-bar" id="progressBar"></div>
+
+<nav>
+  <div class="logo">B站知识平台 / 架构文档</div>
+  <div class="links">
+    <a href="#overview">架构总览</a>
+    <a href="#data">数据层</a>
+    <a href="#auth">认证系统</a>
+    <a href="#api">API 路由</a>
+    <a href="#bilibili">B站集成</a>
+    <a href="#ai">AI 集成</a>
+    <a href="#flow">数据流</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="hero-badge">&#9889; 面向前端工程师的后端技术指南</div>
+  <h1>B站视频知识管理平台<br>后端架构全景</h1>
+  <p>系统讲解全栈架构、数据库设计、AI 集成等后端核心知识，以本项目为实战案例</p>
+  <div class="hero-flow">
+    <span class="step">B站 URL</span>
+    <span class="arrow">&#10142;</span>
+    <span class="step">字幕提取</span>
+    <span class="arrow">&#10142;</span>
+    <span class="step">AI 摘要</span>
+    <span class="arrow">&#10142;</span>
+    <span class="step">向量化</span>
+    <span class="arrow">&#10142;</span>
+    <span class="step">语义搜索</span>
+  </div>
+  <div class="scroll-hint">&#8595; 向下滚动探索</div>
+</div>
+
+<!-- Section 1: Architecture Overview -->
+<section id="overview">
+  <div class="section-label">Chapter 01</div>
+  <div class="section-title">架构总览</div>
+  <div class="section-desc">全栈架构分层设计，从用户请求到数据存储的完整链路</div>
+
+  <div class="arch-diagram">
+    <!-- Frontend -->
+    <div class="arch-layer c-blue">
+      <div class="arch-layer-title">&#127912; 前端 (React)</div>
+      <div class="arch-boxes">
+        <div class="arch-box">
+          <div class="box-icon">&#9883;</div>
+          <div>Next.js App Router</div>
+          <div class="box-label">SSR + 客户端渲染</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#127912;</div>
+          <div>Ant Design</div>
+          <div class="box-label">UI 组件库</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#9998;</div>
+          <div>Tailwind CSS</div>
+          <div class="box-label">原子化样式</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arch-connector">&#9660; HTTP / SSE</div>
+    <div class="data-flow-line"></div>
+
+    <!-- API Layer -->
+    <div class="arch-layer c-purple">
+      <div class="arch-layer-title">&#9881; API Route 层</div>
+      <div class="arch-boxes">
+        <div class="arch-box">
+          <div class="box-icon">&#128274;</div>
+          <div>Auth Routes</div>
+          <div class="box-label">认证接口</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#128214;</div>
+          <div>Notebooks CRUD</div>
+          <div class="box-label">笔记本管理</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#129504;</div>
+          <div>Knowledge Extract</div>
+          <div class="box-label">知识提取</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#127909;</div>
+          <div>Bilibili Proxy</div>
+          <div class="box-label">B站代理</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arch-connector">&#9660;</div>
+    <div class="data-flow-line"></div>
+
+    <!-- Service Layer -->
+    <div class="arch-layer c-green">
+      <div class="arch-layer-title">&#9881; 服务层 (src/lib/)</div>
+      <div class="arch-boxes">
+        <div class="arch-box">
+          <div class="box-icon">&#128274;</div>
+          <div>Auth Config</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#127909;</div>
+          <div>Bilibili SDK</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#129302;</div>
+          <div>Qwen AI Client</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#128225;</div>
+          <div>Embedding Service</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#128196;</div>
+          <div>Prompt Templates</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#128451;</div>
+          <div>DB Client</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arch-connector">&#9660;</div>
+    <div class="data-flow-line"></div>
+
+    <!-- Data Layer -->
+    <div class="arch-layer c-orange">
+      <div class="arch-layer-title">&#128451; 数据层 (PostgreSQL)</div>
+      <div class="arch-boxes">
+        <div class="arch-box">
+          <div class="box-icon">&#128451;</div>
+          <div>Prisma ORM</div>
+          <div class="box-label">类型安全的数据库操作</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#128200;</div>
+          <div>pgpool 连接池</div>
+          <div class="box-label">连接复用</div>
+        </div>
+        <div class="arch-box">
+          <div class="box-icon">&#129504;</div>
+          <div>pgvector 扩展</div>
+          <div class="box-label">向量搜索</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arch-connector" style="display:flex;gap:4rem;">&#9660;&emsp;&emsp;&#9660;</div>
+
+    <!-- External Services -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+      <div class="arch-layer c-pink" style="text-align:center;">
+        <div class="arch-layer-title">&#127909; Bilibili API</div>
+        <div style="font-size:0.8rem;color:var(--text2);">视频 / 字幕 / 音频</div>
+      </div>
+      <div class="arch-layer c-blue" style="text-align:center;">
+        <div class="arch-layer-title">&#129302; DashScope (通义千问)</div>
+        <div style="font-size:0.8rem;color:var(--text2);">LLM + Embedding</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tech Stack -->
+  <div style="margin-top:3rem;">
+    <h3 style="font-size:1.1rem;margin-bottom:1.5rem;">技术选型</h3>
+    <div class="tech-grid">
+      <div class="tech-card">
+        <div class="tech-name">Next.js App Router</div>
+        <div class="tech-role">全栈框架</div>
+        <div class="tech-why">前后端同一项目，API Route 无需单独部署</div>
+      </div>
+      <div class="tech-card">
+        <div class="tech-name">Prisma ORM</div>
+        <div class="tech-role">数据库操作</div>
+        <div class="tech-why">类型安全，自动生成 TS 类型，避免手写 SQL</div>
+      </div>
+      <div class="tech-card">
+        <div class="tech-name">PostgreSQL + pgvector</div>
+        <div class="tech-role">数据存储 + 向量搜索</div>
+        <div class="tech-why">关系型数据库 + 原生向量搜索，一个库解决两个需求</div>
+      </div>
+      <div class="tech-card">
+        <div class="tech-name">NextAuth.js</div>
+        <div class="tech-role">用户认证</div>
+        <div class="tech-why">Next.js 生态标准方案，开箱即用</div>
+      </div>
+      <div class="tech-card">
+        <div class="tech-name">Vercel AI SDK</div>
+        <div class="tech-role">LLM 调用</div>
+        <div class="tech-why">统一的 AI 模型接口，内置流式支持</div>
+      </div>
+      <div class="tech-card">
+        <div class="tech-name">通义千问 (Qwen)</div>
+        <div class="tech-role">AI 推理</div>
+        <div class="tech-why">阿里云 DashScope 服务，中文能力强</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Section 2: Data Layer -->
+<section id="data">
+  <div class="section-label">Chapter 02</div>
+  <div class="section-title">数据层：Prisma ORM + PostgreSQL</div>
+  <div class="section-desc">类型安全的数据库操作，连接池复用，向量搜索支持</div>
+
+  <div class="two-col">
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">数据库连接 (db.ts)</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">src/lib/db.ts</div>
+        </div>
+        <div class="code-body"><span class="kw">const</span> pool = <span class="kw">new</span> <span class="type">pg</span>.<span class="fn">Pool</span>({ connectionString });
+<span class="kw">const</span> adapter = <span class="kw">new</span> <span class="type">PrismaPg</span>(pool);
+<span class="kw">export const</span> prisma = <span class="kw">new</span> <span class="type">PrismaClient</span>({ adapter });
+
+<span class="cmt">// 单例模式：开发环境复用</span>
+<span class="cmt">// 避免热重载创建过多连接</span></div>
+      </div>
+
+      <div class="note">
+        <strong>连接池</strong> 维护一组数据库连接复用，避免每次请求建立新连接。<br>
+        <strong>单例模式</strong> 确保整个应用只创建一个 Prisma 客户端实例。
+      </div>
+    </div>
+
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">核心概念</h3>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="fc-icon">&#128268;</div>
+          <div class="fc-title">连接池 (pg.Pool)</div>
+          <div class="fc-desc">维护一组数据库连接复用，连接建立很昂贵</div>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon">&#128295;</div>
+          <div class="fc-title">适配器模式 (PrismaPg)</div>
+          <div class="fc-desc">灵活切换数据库驱动</div>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon">&#128274;</div>
+          <div class="fc-title">单例模式</div>
+          <div class="fc-desc">防止热重载导致连接泄露</div>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon">&#129504;</div>
+          <div class="fc-title">pgvector 扩展</div>
+          <div class="fc-desc">原生向量搜索能力</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ER Diagram -->
+  <h3 style="font-size:1.1rem;margin:3rem 0 1.5rem;">数据模型 — ER 关系图</h3>
+  <div class="er-diagram">
+    <div class="er-relation">
+      <span class="rel-label">User 1 &#8594; N Notebook &emsp;|&emsp; Notebook N &#8594; N Video &emsp;|&emsp; Video 1 &#8594; N KnowledgePoint 1 &#8594; 1 Embedding</span>
+    </div>
+    <div class="er-entities">
+      <div class="er-entity">
+        <div class="er-entity-header h-blue">User 用户</div>
+        <div class="er-field"><span class="fname">&#128273; id</span><span class="ftype">CUID PK</span></div>
+        <div class="er-field"><span class="fname">email</span><span class="ftype">String @unique</span></div>
+        <div class="er-field"><span class="fname">name</span><span class="ftype">String</span></div>
+        <div class="er-field"><span class="fname">avatar</span><span class="ftype">String?</span></div>
+        <div class="er-field"><span class="fname">password</span><span class="ftype">bcrypt hash</span></div>
+        <div class="er-field"><span class="fname">createdAt</span><span class="ftype">DateTime</span></div>
+      </div>
+      <div class="er-entity">
+        <div class="er-entity-header h-purple">Notebook 笔记本</div>
+        <div class="er-field"><span class="fname">&#128273; id</span><span class="ftype">CUID PK</span></div>
+        <div class="er-field"><span class="fname">userId</span><span class="ftype">FK &#8594; User</span></div>
+        <div class="er-field"><span class="fname">title</span><span class="ftype">String</span></div>
+        <div class="er-field"><span class="fname">tags</span><span class="ftype">String[]</span></div>
+        <div class="er-field"><span class="fname">videoCount</span><span class="ftype">Int 冗余字段</span></div>
+      </div>
+      <div class="er-entity">
+        <div class="er-entity-header h-green">Video 视频</div>
+        <div class="er-field"><span class="fname">&#128273; bvid</span><span class="ftype">String @unique</span></div>
+        <div class="er-field"><span class="fname">title</span><span class="ftype">String</span></div>
+        <div class="er-field"><span class="fname">subtitleText</span><span class="ftype">String</span></div>
+        <div class="er-field"><span class="fname">subtitleSource</span><span class="ftype">cc | transcribe</span></div>
+        <div class="er-field"><span class="fname">summary</span><span class="ftype">String? AI生成</span></div>
+        <div class="er-field"><span class="fname">knowledgeExtracted</span><span class="ftype">Boolean 幂等标记</span></div>
+      </div>
+      <div class="er-entity">
+        <div class="er-entity-header h-orange">KnowledgePoint 知识点</div>
+        <div class="er-field"><span class="fname">type</span><span class="ftype">topic|keyPoint|...</span></div>
+        <div class="er-field"><span class="fname">content</span><span class="ftype">String</span></div>
+        <div class="er-field"><span class="fname">timestamp</span><span class="ftype">Int? 视频时间</span></div>
+        <div class="er-field"><span class="fname">metadata</span><span class="ftype">Json?</span></div>
+      </div>
+      <div class="er-entity">
+        <div class="er-entity-header h-pink">Embedding 向量</div>
+        <div class="er-field"><span class="fname">vector</span><span class="ftype">vector(1024)</span></div>
+        <div class="er-field"><span class="fname">knowledgePointId</span><span class="ftype">FK &#8594; KP</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:1.5rem;">
+    <strong>设计亮点：</strong>
+    <code>videoCount</code> 冗余计数字段，用空间换时间 &bull;
+    <code>knowledgeExtracted</code> 幂等标记防重复 AI 调用 &bull;
+    <code>Unsupported("vector(1024)")</code> 让 Prisma 支持 pgvector
+  </div>
+
+  <!-- Prisma Operations -->
+  <h3 style="font-size:1.1rem;margin:3rem 0 1.5rem;">Prisma 常用操作</h3>
+  <div class="two-col">
+    <div>
+      <h4 style="font-size:0.9rem;margin-bottom:0.8rem;color:var(--accent);">基本 CRUD</h4>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">CRUD 操作</div>
+        </div>
+        <div class="code-body"><span class="cmt">// 创建</span>
+<span class="kw">const</span> nb = <span class="kw">await</span> prisma.notebook.<span class="fn">create</span>({
+  data: { title: <span class="str">"React 学习"</span>, userId }
+});
+
+<span class="cmt">// 查询（带关联）</span>
+<span class="kw">const</span> nb = <span class="kw">await</span> prisma.notebook.<span class="fn">findUnique</span>({
+  where: { id },
+  include: { videos: { include: { video: <span class="prop">true</span> } } }
+});
+
+<span class="cmt">// 原子递增</span>
+<span class="kw">await</span> prisma.notebook.<span class="fn">update</span>({
+  where: { id },
+  data: { videoCount: { increment: <span class="num">1</span> } }
+});</div>
+      </div>
+    </div>
+    <div>
+      <h4 style="font-size:0.9rem;margin-bottom:0.8rem;color:var(--accent2);">向量搜索 (Raw SQL)</h4>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">pgvector 余弦相似度</div>
+        </div>
+        <div class="code-body"><span class="cmt">// pgvector 余弦相似度搜索</span>
+<span class="kw">const</span> results = <span class="kw">await</span> prisma
+  .<span class="fn">$queryRawUnsafe</span>(<span class="str">`
+  SELECT kp.*,
+    1 - (e.vector <=> '${vec}'::vector)
+    as score
+  FROM knowledge_points kp
+  JOIN embeddings e
+    ON e.knowledge_point_id = kp.id
+  ORDER BY e.vector <=> '${vec}'::vector
+  LIMIT 10
+`</span>);</div>
+      </div>
+      <div class="note">
+        <strong>&lt;=&gt;</strong> 是 pgvector 的余弦距离操作符。<code>1 - (&lt;=&gt;)</code> 将距离转为相似度分数（越接近 1 越相似）。
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Section 3: Auth -->
+<section id="auth">
+  <div class="section-label">Chapter 03</div>
+  <div class="section-title">认证系统：NextAuth.js</div>
+  <div class="section-desc">邮箱密码认证 + JWT 无状态会话 + bcrypt 安全哈希</div>
+
+  <!-- Auth flow visual -->
+  <div class="auth-flow-visual">
+    <div class="auth-step">
+      <div class="as-icon">&#128221;</div>
+      <div class="as-label">用户注册</div>
+      <div class="as-sub">POST /api/auth/register</div>
+    </div>
+    <div class="auth-connector">&#10142;</div>
+    <div class="auth-step">
+      <div class="as-icon">&#128272;</div>
+      <div class="as-label">bcrypt 哈希</div>
+      <div class="as-sub">密码永不明文存储</div>
+    </div>
+    <div class="auth-connector">&#10142;</div>
+    <div class="auth-step">
+      <div class="as-icon">&#128451;</div>
+      <div class="as-label">存入数据库</div>
+      <div class="as-sub">prisma.user.create</div>
+    </div>
+    <div class="auth-connector">&#10142;</div>
+    <div class="auth-step">
+      <div class="as-icon">&#128274;</div>
+      <div class="as-label">用户登录</div>
+      <div class="as-sub">POST /api/auth/signin</div>
+    </div>
+    <div class="auth-connector">&#10142;</div>
+    <div class="auth-step">
+      <div class="as-icon">&#9989;</div>
+      <div class="as-label">验证密码</div>
+      <div class="as-sub">bcrypt.compare</div>
+    </div>
+    <div class="auth-connector">&#10142;</div>
+    <div class="auth-step">
+      <div class="as-icon">&#127915;</div>
+      <div class="as-label">生成 JWT</div>
+      <div class="as-sub">HttpOnly Cookie</div>
+    </div>
+  </div>
+
+  <div class="two-col" style="margin-top:2rem;">
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">NextAuth 配置 (auth.ts)</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">src/lib/auth.ts</div>
+        </div>
+        <div class="code-body"><span class="kw">export const</span> authOptions = {
+  providers: [
+    <span class="fn">CredentialsProvider</span>({
+      credentials: {
+        email: { type: <span class="str">"email"</span> },
+        password: { type: <span class="str">"password"</span> },
+      },
+      <span class="kw">async</span> <span class="fn">authorize</span>(credentials) {
+        <span class="kw">const</span> user = <span class="kw">await</span> prisma.user
+          .<span class="fn">findUnique</span>({ where: { email } });
+        <span class="kw">const</span> valid = <span class="kw">await</span> bcrypt
+          .<span class="fn">compare</span>(pwd, user.password);
+        <span class="kw">return</span> valid ? user : <span class="prop">null</span>;
+      },
+    }),
+  ],
+  session: { strategy: <span class="str">"jwt"</span> },
+  callbacks: {
+    <span class="kw">async</span> <span class="fn">jwt</span>({ token, user }) {
+      <span class="kw">if</span> (user) token.id = user.id;
+      <span class="kw">return</span> token;
+    },
+    <span class="kw">async</span> <span class="fn">session</span>({ session, token }) {
+      session.user.id = token.id;
+      <span class="kw">return</span> session;
+    },
+  },
+};</div>
+      </div>
+    </div>
+
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">API 鉴权守卫</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">Route Handler 鉴权</div>
+        </div>
+        <div class="code-body"><span class="kw">export async function</span> <span class="fn">GET</span>(req) {
+  <span class="cmt">// 检查登录状态</span>
+  <span class="kw">const</span> session =
+    <span class="kw">await</span> <span class="fn">getServerSession</span>(authOptions);
+
+  <span class="kw">if</span> (!session?.user) {
+    <span class="kw">return</span> <span class="fn">NextResponse</span>.<span class="fn">json</span>(
+      { error: <span class="str">"请先登录"</span> },
+      { status: <span class="num">401</span> }
+    );
+  }
+
+  <span class="cmt">// session.user.id 就是当前用户</span>
+  <span class="kw">const</span> notebooks = <span class="kw">await</span> prisma
+    .notebook.<span class="fn">findMany</span>({
+      where: { userId: session.user.id }
+    });
+}</div>
+      </div>
+
+      <div class="note">
+        <strong>类比前端：</strong>后端鉴权类似前端路由守卫（ProtectedRoute），但后端检查才是真正的安全保障。前端检查只是 UI 层面的限制。
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Section 4: API Routes -->
+<section id="api">
+  <div class="section-label">Chapter 04</div>
+  <div class="section-title">API 路由设计</div>
+  <div class="section-desc">Next.js Route Handler — 文件路径即路由，HTTP 方法即处理函数</div>
+
+  <div class="two-col">
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">路由映射</h3>
+      <div class="dir-tree">
+<span class="dir">src/app/api/</span>
+  <span class="dir">auth/</span>
+    <span class="dir">[...nextauth]/</span> route.ts   <span class="comment"># NextAuth 登录/登出</span>
+    <span class="dir">register/</span>     route.ts   <span class="comment"># 用户注册</span>
+  <span class="dir">notebooks/</span>
+    route.ts                    <span class="comment"># GET/POST 列表+创建</span>
+    <span class="dir">[id]/</span>
+      route.ts                  <span class="comment"># GET/PATCH/DELETE</span>
+      <span class="dir">videos/</span> route.ts     <span class="comment"># 添加视频</span>
+  <span class="dir">knowledge/</span>
+    <span class="dir">extract/</span>      route.ts   <span class="comment"># 知识提取</span>
+    <span class="dir">search/</span>        route.ts   <span class="comment"># 语义/全文搜索</span>
+  <span class="dir">upowner/</span>
+    <span class="dir">analyze/</span>       route.ts   <span class="comment"># UP主批量分析</span>
+    <span class="dir">videos/</span>         route.ts   <span class="comment"># UP主视频列表</span>
+      </div>
+    </div>
+
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">统一三段式结构</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">标准 API 模式</div>
+        </div>
+        <div class="code-body"><span class="kw">export async function</span> <span class="fn">POST</span>(req) {
+  <span class="kw">try</span> {
+    <span class="cmt">// 1. 解析和验证请求</span>
+    <span class="kw">const</span> { bvid } = <span class="kw">await</span> req.<span class="fn">json</span>();
+    <span class="kw">if</span> (!bvid)
+      <span class="kw">return</span> <span class="fn">error</span>(<span class="str">"缺少参数"</span>, <span class="num">400</span>);
+
+    <span class="cmt">// 2. 业务逻辑</span>
+    <span class="kw">const</span> video = <span class="kw">await</span> prisma.video
+      .<span class="fn">findUnique</span>({ where: { bvid } });
+
+    <span class="cmt">// 3. 返回成功响应</span>
+    <span class="kw">return</span> <span class="fn">NextResponse</span>.<span class="fn">json</span>({
+      message: <span class="str">"操作成功"</span>, data: video
+    });
+  } <span class="kw">catch</span> (err) {
+    <span class="cmt">// 统一错误处理</span>
+    <span class="kw">return</span> <span class="fn">error</span>(err.message, <span class="num">500</span>);
+  }
+}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HTTP Status Codes -->
+  <h3 style="font-size:1rem;margin:2.5rem 0 1rem;">HTTP 状态码约定</h3>
+  <div style="overflow-x:auto;">
+    <table class="compare-table">
+      <thead>
+        <tr><th>状态码</th><th>含义</th><th>使用场景</th></tr>
+      </thead>
+      <tbody>
+        <tr><td style="color:var(--accent3);font-weight:600;">200</td><td>成功</td><td>GET 查询、PATCH 更新成功</td></tr>
+        <tr><td style="color:var(--accent3);font-weight:600;">201</td><td>已创建</td><td>POST 创建资源成功</td></tr>
+        <tr><td style="color:var(--accent4);font-weight:600;">400</td><td>请求错误</td><td>参数缺失、格式错误</td></tr>
+        <tr><td style="color:var(--accent4);font-weight:600;">401</td><td>未认证</td><td>未登录或 Session 过期</td></tr>
+        <tr><td style="color:var(--accent4);font-weight:600;">404</td><td>未找到</td><td>资源不存在</td></tr>
+        <tr><td style="color:var(--accent5);font-weight:600;">500</td><td>服务器错误</td><td>代码异常、外部 API 报错</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- SSE -->
+  <h3 style="font-size:1rem;margin:2.5rem 0 1rem;">SSE 流式响应</h3>
+  <div class="code-block">
+    <div class="code-header">
+      <div class="code-dots"><span></span><span></span><span></span></div>
+      <div class="code-filename">Server-Sent Events 模式</div>
+    </div>
+    <div class="code-body"><span class="kw">export async function</span> <span class="fn">POST</span>(req) {
+  <span class="kw">const</span> stream = <span class="kw">new</span> <span class="type">ReadableStream</span>({
+    <span class="kw">async</span> <span class="fn">start</span>(controller) {
+      <span class="kw">const</span> <span class="fn">send</span> = (data) <span class="op">=></span>
+        controller.<span class="fn">enqueue</span>(
+          encoder.<span class="fn">encode</span>(
+            <span class="str">`data: ${JSON.stringify(data)}\n\n`</span>
+          )
+        );
+
+      <span class="fn">send</span>({ status: <span class="str">"started"</span>, progress: <span class="num">0</span> });
+
+      <span class="kw">for</span> (<span class="kw">const</span> item <span class="kw">of</span> items) {
+        <span class="kw">await</span> <span class="fn">processItem</span>(item);
+        <span class="fn">send</span>({ status: <span class="str">"processing"</span>, progress });
+      }
+
+      <span class="fn">send</span>({ status: <span class="str">"completed"</span>, progress: <span class="num">100</span> });
+      controller.<span class="fn">close</span>();
+    },
+  });
+
+  <span class="kw">return new</span> <span class="type">Response</span>(stream, {
+    headers: {
+      <span class="str">"Content-Type"</span>: <span class="str">"text/event-stream"</span>,
+      <span class="str">"Cache-Control"</span>: <span class="str">"no-cache"</span>,
+    },
+  });
+}</div>
+  </div>
+
+  <div class="note">
+    <strong>SSE vs WebSocket：</strong>SSE 是单向的（服务端 &#10142; 客户端），更简单，适合进度推送。WebSocket 是双向的，适合实时聊天等场景。
+  </div>
+</section>
+
+<!-- Section 5: Bilibili API -->
+<section id="bilibili">
+  <div class="section-label">Chapter 05</div>
+  <div class="section-title">外部 API 集成：Bilibili</div>
+  <div class="section-desc">多层认证体系、匿名 Cookie 缓存、WBI 签名算法</div>
+
+  <div class="flow-container">
+    <h3 style="font-size:1rem;margin-bottom:1.5rem;text-align:center;">B站 API 认证体系</h3>
+    <div class="flow">
+      <div class="flow-row">
+        <div class="flow-node n-blue visible" style="opacity:1;transform:none;">
+          <div class="fn-title">&#127909; Bilibili API</div>
+          <div class="fn-sub">视频 / 字幕 / 音频数据源</div>
+        </div>
+      </div>
+      <div class="flow-arrow visible" style="opacity:1;">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-green visible" style="opacity:1;transform:none;">
+          <div class="fn-title">&#128229; 基础请求</div>
+          <div class="fn-sub">公开接口，无需认证<br>如：视频信息查询</div>
+        </div>
+        <div class="flow-node n-orange visible" style="opacity:1;transform:none;">
+          <div class="fn-title">&#128274; WBI 签名</div>
+          <div class="fn-sub">防篡改签名<br>如：字幕接口</div>
+        </div>
+        <div class="flow-node n-pink visible" style="opacity:1;transform:none;">
+          <div class="fn-title">&#128100; SESSDATA</div>
+          <div class="fn-sub">用户身份认证<br>如：UP主视频列表</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="two-col" style="margin-top:2rem;">
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">匿名 Cookie 缓存</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">Cookie 缓存机制</div>
+        </div>
+        <div class="code-body"><span class="cmt">// 缓存匿名 cookies</span>
+<span class="kw">let</span> cachedCookies = <span class="prop">null</span>;
+<span class="kw">let</span> cookiesExpireAt = <span class="num">0</span>;
+
+<span class="kw">async function</span> <span class="fn">getCookies</span>() {
+  <span class="cmt">// 30 分钟内复用缓存</span>
+  <span class="kw">if</span> (cachedCookies
+      && Date.now() < cookiesExpireAt) {
+    <span class="kw">return</span> cachedCookies;
+  }
+
+  <span class="cmt">// 重新获取</span>
+  <span class="kw">const</span> res = <span class="kw">await</span> <span class="fn">fetch</span>(
+    <span class="str">"https://www.bilibili.com/"</span>,
+    { redirect: <span class="str">"manual"</span> }
+  );
+  <span class="cmt">// ... 提取 Cookie ...</span>
+
+  cookiesExpireAt =
+    Date.now() + <span class="num">30</span> * <span class="num">60</span> * <span class="num">1000</span>;
+  <span class="kw">return</span> cachedCookies;
+}</div>
+      </div>
+    </div>
+
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">WBI 签名算法</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">参数签名流程</div>
+        </div>
+        <div class="code-body"><span class="cmt">// 1. 获取签名密钥</span>
+<span class="kw">const</span> { imgKey, subKey } =
+  <span class="kw">await</span> <span class="fn">getWbiKeys</span>();
+
+<span class="cmt">// 2. 生成混淆密钥</span>
+<span class="kw">const</span> mixinKey =
+  <span class="fn">getMixinKey</span>(imgKey + subKey);
+
+<span class="cmt">// 3. 参数签名</span>
+<span class="kw">const</span> wts = Math.<span class="fn">floor</span>(Date.now()/<span class="num">1000</span>);
+<span class="kw">const</span> query = <span class="fn">sortAndJoin</span>({
+  ...params, wts
+});
+<span class="kw">const</span> w_rid = <span class="fn">md5</span>(query + mixinKey);
+
+<span class="cmt">// 4. 发起签名请求</span>
+<span class="kw">const</span> url =
+  <span class="str">`/x/player/wbi/v2?${query}&w_rid=${w_rid}`</span>;</div>
+      </div>
+      <div class="note">
+        <strong>核心思想：</strong>请求参数 + 密钥通过 MD5 哈希生成签名，服务端验证签名判断请求是否被篡改。
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Section 6: AI Integration -->
+<section id="ai">
+  <div class="section-label">Chapter 06</div>
+  <div class="section-title">AI 集成与工程化</div>
+  <div class="section-desc">LLM 调用、Prompt 工程、向量嵌入、语义搜索</div>
+
+  <div class="two-col">
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">AI 客户端 (qwen.ts)</h3>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">src/lib/qwen.ts</div>
+        </div>
+        <div class="code-body"><span class="kw">import</span> { createOpenAICompatible }
+  <span class="kw">from</span> <span class="str">"@ai-sdk/openai-compatible"</span>;
+
+<span class="cmt">// 一行代码创建 AI 客户端</span>
+<span class="kw">export const</span> qwen =
+  <span class="fn">createOpenAICompatible</span>({
+    name: <span class="str">"qwen"</span>,
+    apiKey: process.env.DASHSCOPE_API_KEY,
+    baseURL:
+      <span class="str">"https://dashscope.aliyuncs.com/..."</span>,
+  });
+
+<span class="cmt">// 切换模型只需改 baseURL + apiKey</span></div>
+      </div>
+    </div>
+
+    <div>
+      <h3 style="font-size:1rem;margin-bottom:1rem;">两种调用模式</h3>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="fc-icon">&#127919;</div>
+          <div class="fc-title">流式生成 (streamText)</div>
+          <div class="fc-desc">实时输出，适合摘要、对话。前端逐块读取渲染。</div>
+        </div>
+        <div class="feature-card">
+          <div class="fc-icon">&#128230;</div>
+          <div class="fc-title">结构化提取 (generateText)</div>
+          <div class="fc-desc">一次性返回完整 JSON，适合知识提取。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Streaming vs Non-streaming -->
+  <h3 style="font-size:1rem;margin:2.5rem 0 1rem;">流式 vs 非流式</h3>
+  <div class="two-col">
+    <div>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">streamText — 流式输出</div>
+        </div>
+        <div class="code-body"><span class="kw">import</span> { streamText } <span class="kw">from</span> <span class="str">"ai"</span>;
+
+<span class="kw">const</span> result = <span class="fn">streamText</span>({
+  model: <span class="fn">qwen</span>(<span class="str">"qwen-plus"</span>),
+  system: SUMMARY_PROMPT,
+  messages: [{
+    role: <span class="str">"user"</span>,
+    content: <span class="str">`分析字幕：\n${text}`</span>
+  }],
+});
+
+<span class="cmt">// 一行返回 SSE 流</span>
+<span class="kw">return</span> result.<span class="fn">toTextStreamResponse</span>();</div>
+      </div>
+    </div>
+    <div>
+      <div class="code-block">
+        <div class="code-header">
+          <div class="code-dots"><span></span><span></span><span></span></div>
+          <div class="code-filename">generateText — 结构化提取</div>
+        </div>
+        <div class="code-body"><span class="kw">import</span> { generateText } <span class="kw">from</span> <span class="str">"ai"</span>;
+
+<span class="kw">const</span> { text } = <span class="kw">await</span> <span class="fn">generateText</span>({
+  model: <span class="fn">qwen</span>(<span class="str">"qwen-plus"</span>),
+  prompt: EXTRACTION_PROMPT(title, text),
+});
+
+<span class="cmt">// 解析 LLM 返回的 JSON</span>
+<span class="kw">const</span> match = text.<span class="fn">match</span>(<span class="str">/\[[\s\S]*\]/</span>);
+<span class="kw">const</span> points = JSON.<span class="fn">parse</span>(match[0]);
+
+<span class="cmt">// 存入数据库</span>
+<span class="kw">for</span> (<span class="kw">const</span> p <span class="kw">of</span> points)
+  <span class="kw">await</span> prisma.knowledgePoint
+    .<span class="fn">create</span>({ data: { ...p, videoId } });</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Prompt Engineering -->
+  <h3 style="font-size:1rem;margin:2.5rem 0 1rem;">Prompt 工程四要素</h3>
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="fc-icon">&#127917;</div>
+      <div class="fc-title">角色定义</div>
+      <div class="fc-desc">"你是一个专业的知识提取专家" — 约束 AI 的输出风格</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128203;</div>
+      <div class="fc-title">结构化输出</div>
+      <div class="fc-desc">指定 JSON 数组格式 — 便于程序解析</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128736;</div>
+      <div class="fc-title">约束条件</div>
+      <div class="fc-desc">数量 10-30、只返回 JSON — 控制输出质量</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128260;</div>
+      <div class="fc-title">重试机制</div>
+      <div class="fc-desc">JSON 解析失败时用简化 prompt 重试 — 提高鲁棒性</div>
+    </div>
+  </div>
+
+  <!-- Vector Embedding -->
+  <h3 style="font-size:1rem;margin:2.5rem 0 1rem;">向量嵌入与搜索</h3>
+  <div class="vector-anim">
+    <div class="vector-step">
+      <div class="vs-icon" style="background:rgba(56,189,248,0.1);">&#128269;</div>
+      <div>
+        <div class="vs-text">用户搜索 <strong>"React Hooks"</strong></div>
+        <div class="vs-sub">输入查询文本</div>
+      </div>
+    </div>
+    <div class="vector-arrow-down">&#9660;</div>
+    <div class="vector-step">
+      <div class="vs-icon" style="background:rgba(129,140,248,0.1);">&#129504;</div>
+      <div>
+        <div class="vs-text">generateEmbedding() &#10142; <code style="color:var(--accent2)">[0.12, -0.34, 0.56, ...]</code></div>
+        <div class="vs-sub">文本 &#10142; 1024 维浮点向量</div>
+      </div>
+    </div>
+    <div class="vector-arrow-down">&#9660;</div>
+    <div class="vector-step">
+      <div class="vs-icon" style="background:rgba(52,211,153,0.1);">&#128451;</div>
+      <div>
+        <div class="vs-text">pgvector 余弦相似度 <code style="color:var(--accent3)">&lt;=&gt;</code> 操作符</div>
+        <div class="vs-sub">在 PostgreSQL 中计算向量距离</div>
+      </div>
+    </div>
+    <div class="vector-arrow-down">&#9660;</div>
+    <div class="vector-step">
+      <div class="vs-icon" style="background:rgba(251,146,60,0.1);">&#9989;</div>
+      <div>
+        <div class="vs-text">返回最相近的知识点</div>
+        <div class="vs-sub">"useState 是 React 的基础 Hook"</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Search comparison -->
+  <div class="search-compare">
+    <div class="search-side">
+      <h4 style="color:var(--accent);">&#128269; 全文搜索 (ILIKE)</h4>
+      <ul>
+        <li>&#8226; 关键词精确匹配</li>
+        <li>&#8226; 速度快</li>
+        <li>&#8226; 无语义理解<br><span style="font-size:0.72rem;color:var(--accent4);">"苹果" 和 "Apple" 无关</span></li>
+        <li>&#8226; 适合精确查找</li>
+      </ul>
+    </div>
+    <div class="search-vs">VS</div>
+    <div class="search-side">
+      <h4 style="color:var(--accent2);">&#129504; 语义搜索 (pgvector)</h4>
+      <ul>
+        <li>&#8226; 向量余弦相似度</li>
+        <li>&#8226; 理解同义词和语义</li>
+        <li>&#8226; 计算量稍大<br><span style="font-size:0.72rem;color:var(--accent4);">需计算向量距离</span></li>
+        <li>&#8226; 适合探索性搜索</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Async embedding -->
+  <h3 style="font-size:1rem;margin:2.5rem 0 1rem;">异步嵌入生成</h3>
+  <div class="code-block">
+    <div class="code-header">
+      <div class="code-dots"><span></span><span></span><span></span></div>
+      <div class="code-filename">不阻塞 API 响应</div>
+    </div>
+    <div class="code-body"><span class="cmt">// 保存知识点（立即返回）</span>
+<span class="kw">const</span> kp = <span class="kw">await</span> prisma.knowledgePoint
+  .<span class="fn">create</span>({ data: { ... } });
+
+<span class="cmt">// 异步生成 embedding（不等待完成）</span>
+<span class="fn">generateEmbedding</span>(kp.content)
+  .<span class="fn">then</span>(<span class="kw">async</span> (embedding) <span class="op">=></span> {
+    <span class="kw">await</span> prisma.<span class="fn">$executeRaw</span><span class="str">`
+      INSERT INTO embeddings
+        (id, knowledge_point_id, vector)
+      VALUES (${uuid()}, ${kp.id},
+              ${toVector(embedding)}::vector)
+    `</span>;
+  })
+  .<span class="fn">catch</span>(err <span class="op">=></span> console.<span class="fn">error</span>(err));
+
+<span class="cmt">// 立即返回，不等 embedding 完成</span>
+<span class="kw">return</span> <span class="fn">json</span>({ message: <span class="str">"知识提取完成"</span> });</div>
+  </div>
+  <div class="note">
+    <strong>为什么异步？</strong>30 个知识点逐个生成 embedding 需 30-60 秒。异步处理让用户立即看到结果，embedding 在后台静默生成。
+  </div>
+</section>
+
+<!-- Section 7: Data Flow -->
+<section id="flow">
+  <div class="section-label">Chapter 07</div>
+  <div class="section-title">核心数据流</div>
+  <div class="section-desc">从用户输入到搜索结果，完整的数据流转路径</div>
+
+  <!-- Video processing flow -->
+  <h3 style="font-size:1rem;margin-bottom:1.5rem;">视频处理完整流程</h3>
+  <div class="flow-container">
+    <div class="flow">
+      <div class="flow-row">
+        <div class="flow-node n-blue">
+          <div class="fn-title">&#128269; 提取 BV 号</div>
+          <div class="fn-sub">从 URL 解析 bvid</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-green">
+          <div class="fn-title">&#127909; 获取视频信息</div>
+          <div class="fn-sub">title, pic, duration, cid</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-purple">
+          <div class="fn-title">&#128196; 获取 CC 字幕</div>
+          <div class="fn-sub">WBI签名请求字幕接口</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-orange">
+          <div class="fn-title">&#128451; 保存到数据库</div>
+          <div class="fn-sub">upsert 模式（去重）</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-pink">
+          <div class="fn-title">&#129302; AI 生成摘要</div>
+          <div class="fn-sub">streamText 实时推送到前端</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-blue">
+          <div class="fn-title">&#129504; 知识点提取</div>
+          <div class="fn-sub">generateText &#10142; JSON &#10142; 存库 + 异步 embedding</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-green">
+          <div class="fn-title">&#128269; 可搜索</div>
+          <div class="fn-sub">语义搜索 (pgvector) / 全文搜索 (ILIKE)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- UP Owner flow -->
+  <h3 style="font-size:1rem;margin:3rem 0 1.5rem;">UP主批量分析流程</h3>
+  <div class="flow-container">
+    <div class="flow">
+      <div class="flow-row">
+        <div class="flow-node n-pink">
+          <div class="fn-title">&#128100; 输入 UP主 mid</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-orange">
+          <div class="fn-title">&#128230; 分页获取全部视频</div>
+          <div class="fn-sub">while (page &lt;= totalPages)</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-purple">
+          <div class="fn-title">&#127919; SSE 实时推送进度</div>
+          <div class="fn-sub">跳过已处理的视频 (幂等标记)</div>
+        </div>
+      </div>
+      <div class="flow-arrow">&#9660;</div>
+      <div class="flow-row">
+        <div class="flow-node n-green">
+          <div class="fn-title">&#9989; 返回统计结果</div>
+          <div class="fn-sub">{ total, processed, skipped, errors }</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Learning Path -->
+<section id="learning">
+  <div class="section-label">Appendix</div>
+  <div class="section-title">前端工程师后端入门路线</div>
+  <div class="section-desc">基于本项目的知识图谱，循序渐进掌握后端核心技能</div>
+
+  <div class="learning-path">
+    <div class="lp-item">
+      <div class="lp-stage">Stage 01</div>
+      <div class="lp-title">理解基础概念</div>
+      <div class="lp-items">
+        <span>&#8226;</span> HTTP 协议（请求方法、状态码、Header）<br>
+        <span>&#8226;</span> API 设计（RESTful、路径参数、请求体）<br>
+        <span>&#8226;</span> 数据库基础（表、关系、索引）
+      </div>
+    </div>
+    <div class="lp-item">
+      <div class="lp-stage">Stage 02</div>
+      <div class="lp-title">掌握本项目的技术栈</div>
+      <div class="lp-items">
+        <span>&#8226;</span> Prisma ORM（Schema &#10142; Migration &#10142; CRUD）<br>
+        <span>&#8226;</span> Next.js Route Handler（API 路由编写）<br>
+        <span>&#8226;</span> NextAuth.js（认证原理）<br>
+        <span>&#8226;</span> TypeScript 后端类型安全
+      </div>
+    </div>
+    <div class="lp-item">
+      <div class="lp-stage">Stage 03</div>
+      <div class="lp-title">深入后端工程化</div>
+      <div class="lp-items">
+        <span>&#8226;</span> 错误处理与日志<br>
+        <span>&#8226;</span> 异步编程（Promise、流式处理）<br>
+        <span>&#8226;</span> 外部 API 集成（认证、签名、重试）<br>
+        <span>&#8226;</span> 性能优化（缓存、连接池、索引）
+      </div>
+    </div>
+    <div class="lp-item">
+      <div class="lp-stage">Stage 04</div>
+      <div class="lp-title">AI 工程化</div>
+      <div class="lp-items">
+        <span>&#8226;</span> LLM 调用模式（流式 vs 非流式）<br>
+        <span>&#8226;</span> Prompt 工程与模板管理<br>
+        <span>&#8226;</span> 向量嵌入与语义搜索<br>
+        <span>&#8226;</span> AI 输出解析与容错
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>B站视频知识管理平台 &mdash; 后端架构技术文档</p>
+  <p style="margin-top:0.5rem;color:var(--text2);">Generated from backend-architecture.md</p>
+</footer>
+
+<script>
+// Particles
+(function() {
+  const container = document.getElementById('particles');
+  const colors = ['#38bdf8', '#818cf8', '#34d399', '#fb923c', '#f472b6'];
+  for (let i = 0; i < 30; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const size = Math.random() * 4 + 2;
+    p.style.cssText = `
+      width: ${size}px; height: ${size}px;
+      left: ${Math.random() * 100}%;
+      background: ${colors[Math.floor(Math.random() * colors.length)]};
+      animation-duration: ${Math.random() * 20 + 15}s;
+      animation-delay: ${Math.random() * 20}s;
+    `;
+    container.appendChild(p);
+  }
+})();
+
+// Scroll animations
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach((entry, i) => {
+    if (entry.isIntersecting) {
+      // Stagger children animations
+      const children = entry.target.querySelectorAll('.tech-card, .feature-card, .er-entity, .flow-node, .flow-arrow, .vector-step, .vector-arrow-down, .auth-step, .auth-connector, .lp-item');
+      children.forEach((child, j) => {
+        setTimeout(() => {
+          child.classList.add('visible');
+        }, j * 100);
+      });
+      // Also mark the section itself
+      if (entry.target.tagName === 'SECTION') {
+        entry.target.classList.add('visible');
+      }
+    }
+  });
+}, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+
+// Observe sections
+document.querySelectorAll('section').forEach(s => observer.observe(s));
+
+// Progress bar
+window.addEventListener('scroll', () => {
+  const scrollTop = document.documentElement.scrollTop;
+  const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+  const progress = (scrollTop / docHeight) * 100;
+  document.getElementById('progressBar').style.width = progress + '%';
+});
+
+// Smooth nav highlight
+const navLinks = document.querySelectorAll('nav .links a');
+const sections = document.querySelectorAll('section[id]');
+
+window.addEventListener('scroll', () => {
+  let current = '';
+  sections.forEach(section => {
+    const top = section.offsetTop - 100;
+    if (window.scrollY >= top) {
+      current = section.getAttribute('id');
+    }
+  });
+  navLinks.forEach(link => {
+    link.style.color = link.getAttribute('href') === '#' + current ? 'var(--accent)' : '';
+  });
+});
+</script>
+</body>
+</html>

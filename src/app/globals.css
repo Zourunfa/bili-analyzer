@@ -4,11 +4,12 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ===== DESIGN SYSTEM: "Deep Space Bilibili" ===== */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -49,82 +50,286 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Base */
+  --background: #0a0a1a;
+  --foreground: #e4e4f0;
+  --card: #12122a;
+  --card-foreground: #e4e4f0;
+  --popover: #16162e;
+  --popover-foreground: #e4e4f0;
+  /* Brand: Bilibili Pink */
+  --primary: #fb7299;
+  --primary-foreground: #ffffff;
+  --secondary: #1a1a36;
+  --secondary-foreground: #b8b8d0;
+  --muted: #1a1a36;
+  --muted-foreground: #6b6b8d;
+  --accent: #4cc9f0;
+  --accent-foreground: #ffffff;
+  --destructive: #ff4757;
+  --border: #1e1e3a;
+  --input: #1e1e3a;
+  --ring: #fb7299;
+  /* Radius */
+  --radius: 0.75rem;
+  /* Charts */
+  --chart-1: #fb7299;
+  --chart-2: #4cc9f0;
+  --chart-3: #a78bfa;
+  --chart-4: #34d399;
+  --chart-5: #fbbf24;
+  /* Sidebar */
+  --sidebar: #0e0e22;
+  --sidebar-foreground: #e4e4f0;
+  --sidebar-primary: #fb7299;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1a1a36;
+  --sidebar-accent-foreground: #e4e4f0;
+  --sidebar-border: #1e1e3a;
+  --sidebar-ring: #fb7299;
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-}
-
+/* ===== GLOBAL STYLES ===== */
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   html {
     @apply font-sans;
   }
+}
+
+/* ===== CUSTOM SCROLLBAR ===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(251, 114, 153, 0.2);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(251, 114, 153, 0.4);
+}
+
+/* ===== GLASS CARD EFFECT ===== */
+.glass-card {
+  background: rgba(18, 18, 42, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(251, 114, 153, 0.1);
+  border-radius: 16px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.glass-card:hover {
+  border-color: rgba(251, 114, 153, 0.25);
+  box-shadow: 0 0 30px rgba(251, 114, 153, 0.06);
+}
+
+/* ===== GRADIENT BACKGROUND ===== */
+.gradient-bg {
+  background: radial-gradient(ellipse at 20% 0%, rgba(251, 114, 153, 0.08) 0%, transparent 50%),
+              radial-gradient(ellipse at 80% 100%, rgba(76, 201, 240, 0.06) 0%, transparent 50%),
+              var(--background);
+}
+
+/* ===== GLOW BUTTON ===== */
+.glow-btn {
+  position: relative;
+  overflow: hidden;
+}
+.glow-btn::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  background: linear-gradient(135deg, #fb7299, #4cc9f0);
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.3s;
+  z-index: -1;
+  filter: blur(12px);
+}
+.glow-btn:hover::before {
+  opacity: 0.5;
+}
+
+/* ===== FADE IN ANIMATION ===== */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.animation-delay-1 { animation-delay: 0.1s; opacity: 0; }
+.animation-delay-2 { animation-delay: 0.2s; opacity: 0; }
+.animation-delay-3 { animation-delay: 0.3s; opacity: 0; }
+.animation-delay-4 { animation-delay: 0.4s; opacity: 0; }
+.animation-delay-5 { animation-delay: 0.5s; opacity: 0; }
+
+/* ===== PULSE DOT ===== */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* ===== ANT DESIGN OVERRIDES (dark theme) ===== */
+.ant-btn-primary:not(.ant-btn-background-ghost) {
+  background: linear-gradient(135deg, #fb7299, #e85d8a) !important;
+  border: none !important;
+  box-shadow: 0 2px 12px rgba(251, 114, 153, 0.3) !important;
+}
+.ant-btn-primary:not(.ant-btn-background-ghost):hover {
+  background: linear-gradient(135deg, #fc8bab, #fb7299) !important;
+  box-shadow: 0 4px 20px rgba(251, 114, 153, 0.4) !important;
+}
+
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-select-selector,
+.ant-input-password {
+  background-color: #1a1a36 !important;
+  border-color: #1e1e3a !important;
+  color: #e4e4f0 !important;
+}
+.ant-input::placeholder {
+  color: #6b6b8d !important;
+}
+.ant-input:focus,
+.ant-input-affix-wrapper:focus,
+.ant-input-affix-wrapper-focused {
+  border-color: #fb7299 !important;
+  box-shadow: 0 0 0 2px rgba(251, 114, 153, 0.15) !important;
+}
+
+.ant-card {
+  background: rgba(18, 18, 42, 0.7) !important;
+  border-color: #1e1e3a !important;
+  backdrop-filter: blur(20px);
+}
+.ant-card:hover {
+  border-color: rgba(251, 114, 153, 0.25) !important;
+}
+
+.ant-tabs-tab {
+  color: #6b6b8d !important;
+}
+.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #fb7299 !important;
+}
+.ant-tabs-ink-bar {
+  background: #fb7299 !important;
+}
+
+.ant-tag {
+  border-radius: 6px !important;
+}
+
+.ant-divider {
+  border-color: #1e1e3a !important;
+}
+
+.ant-spin .ant-spin-dot-item {
+  background: #fb7299 !important;
+}
+
+.ant-progress-bg {
+  background: linear-gradient(90deg, #fb7299, #4cc9f0) !important;
+}
+
+.ant-steps-item-process .ant-steps-item-icon {
+  background: #fb7299 !important;
+  border-color: #fb7299 !important;
+}
+
+/* ===== MODAL DARK MODE ===== */
+.ant-modal-content {
+  background: #1a1a36 !important;
+  color: #e4e4f0 !important;
+}
+.ant-modal-header {
+  background: #1a1a36 !important;
+  color: #e4e4f0 !important;
+  border-bottom: 1px solid #1e1e3a !important;
+}
+.ant-modal-title {
+  color: #e4e4f0 !important;
+}
+.ant-modal-body {
+  color: #e4e4f0 !important;
+}
+.ant-modal-footer {
+  border-top: 1px solid #1e1e3a !important;
+}
+.ant-modal-close {
+  color: #6b6b8d !important;
+}
+.ant-modal-close:hover {
+  color: #e4e4f0 !important;
+}
+.ant-modal-mask {
+  background: rgba(0, 0, 0, 0.6) !important;
+  backdrop-filter: blur(4px) !important;
+}
+
+/* ===== MARKDOWN CONTENT IN DARK MODE ===== */
+.markdown-content {
+  color: #c8c8e0;
+  line-height: 1.8;
+}
+.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+  color: #e4e4f0;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+.markdown-content h1 { font-size: 1.5em; }
+.markdown-content h2 { font-size: 1.25em; }
+.markdown-content h3 { font-size: 1.1em; }
+.markdown-content p { margin-bottom: 0.8em; }
+.markdown-content ul, .markdown-content ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.8em;
+}
+.markdown-content li { margin-bottom: 0.3em; }
+.markdown-content code {
+  background: rgba(251, 114, 153, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: #fb7299;
+}
+.markdown-content pre {
+  background: #0e0e22;
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+.markdown-content pre code {
+  background: transparent;
+  color: #c8c8e0;
+}
+.markdown-content blockquote {
+  border-left: 3px solid #fb7299;
+  padding-left: 16px;
+  margin-left: 0;
+  color: #8b8bb0;
+}
+.markdown-content a {
+  color: #4cc9f0;
+  text-decoration: none;
+}
+.markdown-content a:hover {
+  text-decoration: underline;
 }
