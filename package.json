@@ -5,9 +5,10 @@
   "scripts": {
     "dev": "next dev --port 3300",
     "dev:local": "PATH=\"$HOME/.venv/bin:$PATH\" next dev --port 3300",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.37",
