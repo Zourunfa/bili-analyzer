@@ -36,7 +36,7 @@ CREATE TABLE "videos" (
     "duration" INTEGER NOT NULL,
     "owner_name" TEXT NOT NULL,
     "owner_mid" TEXT NOT NULL,
-    "cid" INTEGER,
+    "cid" BIGINT,
     "subtitle_text" TEXT NOT NULL,
     "subtitle_source" TEXT NOT NULL DEFAULT 'cc',
     "summary" TEXT,
