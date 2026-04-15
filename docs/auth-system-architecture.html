@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>认证系统架构解析 - 视记 VideoNote</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif; background: #0a0a1a; color: #e4e4f0; line-height: 1.6; }
+    .slide { min-height: 100vh; padding: 60px 80px; display: flex; flex-direction: column; justify-content: center; border-bottom: 1px solid #1e1e3a; }
+    .slide-title { font-size: 48px; color: #fb7299; margin-bottom: 40px; }
+    .slide h2 { font-size: 32px; color: #4cc9f0; margin-bottom: 24px; }
+    .slide h3 { font-size: 24px; color: #a78bfa; margin: 20px 0 12px; }
+    p, li { font-size: 20px; color: #c4c4d4; margin-bottom: 12px; }
+    ul { padding-left: 40px; }
+    li { margin-bottom: 8px; }
+    code { background: #1a1a36; padding: 2px 8px; border-radius: 4px; color: #4cc9f0; font-family: 'Fira Code', monospace; }
+    .highlight { color: #fb7299; font-weight: bold; }
+    .box { background: #12122a; border: 1px solid #1e1e3a; border-radius: 12px; padding: 24px; margin: 16px 0; }
+    .flow { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .node { background: linear-gradient(135deg, #1a1a36, #12122a); border: 1px solid #fb7299; border-radius: 8px; padding: 16px 24px; text-align: center; min-width: 140px; }
+    .node.success { border-color: #4cc9f0; }
+    .node.warn { border-color: #fbbf24; }
+    .arrow { font-size: 28px; color: #5b5b7d; }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    th, td { padding: 12px 16px; text-align: left; border: 1px solid #1e1e3a; }
+    th { background: #1a1a36; color: #fb7299; }
+    td { color: #c4c4d4; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+    .icon { width: 48px; height: 48px; background: linear-gradient(135deg, #fb7299, #4cc9f0); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; margin-bottom: 12px; }
+    .card { background: #12122a; border-radius: 12px; padding: 24px; border: 1px solid #1e1e3a; }
+    .tag { display: inline-block; background: #fb729933; color: #fb7299; padding: 4px 12px; border-radius: 20px; font-size: 14px; margin-right: 8px; }
+    .tag.blue { background: #4cc9f033; color: #4cc9f0; }
+    .tag.purple { background: #a78bfa33; color: #a78bfa; }
+    pre { background: #12122a; padding: 20px; border-radius: 8px; overflow-x: auto; font-size: 14px; line-height: 1.5; border: 1px solid #1e1e3a; }
+    .mermaid { background: #12122a; padding: 20px; border-radius: 8px; text-align: center; }
+  </style>
+</head>
+<body>
+
+<!-- Slide 1: 封面 -->
+<div class="slide" style="text-align: center;">
+  <div style="font-size: 80px; margin-bottom: 30px;">🔐</div>
+  <h1 class="slide-title" style="font-size: 64px;">视记 VideoNote</h1>
+  <h2 style="color: #4cc9f0; font-size: 36px; margin-bottom: 40px;">认证系统架构解析</h2>
+  <p style="color: #8b8ba8; font-size: 24px;">NextAuth.js + JWT + Prisma</p>
+  <div style="margin-top: 60px; color: #5b5b7d;">
+    <span class="tag">Next.js 16</span>
+    <span class="tag blue">NextAuth v5</span>
+    <span class="tag purple">Prisma ORM</span>
+  </div>
+</div>
+
+<!-- Slide 2: 认证流程概览 -->
+<div class="slide">
+  <h1 class="slide-title">🔄 认证流程概览</h1>
+  <div class="flow" style="justify-content: center; margin-top: 40px;">
+    <div class="node">
+      <div>👤 用户</div>
+      <div style="font-size: 12px; color: #8b8ba8;">发起请求</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node success">
+      <div>🔒 NextAuth</div>
+      <div style="font-size: 12px; color: #8b8ba8;">验证身份</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <div>🎫 JWT</div>
+      <div style="font-size: 12px; color: #8b8ba8;">生成令牌</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node success">
+      <div>📄 Session</div>
+      <div style="font-size: 12px; color: #8b8ba8;">会话管理</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="node">
+      <div>🛡️ API</div>
+      <div style="font-size: 12px; color: #8b8ba8;">保护路由</div>
+    </div>
+  </div>
+  <div class="box" style="margin-top: 40px; text-align: center;">
+    <p>用户登录后，后续请求通过 <code>Authorization: Bearer &lt;token&gt;</code> 或 Session Cookie 自动携带认证信息</p>
+  </div>
+</div>
+
+<!-- Slide 3: NextAuth 配置架构 -->
+<div class="slide">
+  <h1 class="slide-title">⚙️ NextAuth v5 配置架构</h1>
+  <div class="two-col">
+    <div class="card">
+      <h3>📁 文件结构</h3>
+<pre>
+src/app/api/auth/[...nextauth]/route.ts
+├── callbacks.ts        # 回调函数
+├── auth.ts            # 核心配置
+└── providers.ts       # 第三方登录
+</pre>
+    </div>
+    <div class="card">
+      <h3>🔑 核心配置 auth.ts</h3>
+<pre>
+export default NextAuth({
+  <span class="highlight">providers</span>: [credentialsProvider],
+  <span class="highlight">callbacks</span>: { jwt, session },
+  <span class="highlight">session</span>: { strategy: "jwt" },
+  <span class="highlight">pages</span>: { signIn: "/login" }
+})
+</pre>
+    </div>
+  </div>
+  <div class="box" style="margin-top: 20px;">
+    <p><span class="highlight">CredentialsProvider</span>: 支持邮箱+密码登录</p>
+    <p><span class="highlight">JWT Strategy</span>: Session 以 JWT 形式存储在 cookie 中</p>
+  </div>
+</div>
+
+<!-- Slide 4: 数据库模型 -->
+<div class="slide">
+  <h1 class="slide-title">💾 Prisma 用户模型</h1>
+  <div class="card">
+    <h3>prisma/schema.prisma</h3>
+<pre>
+model User {
+  <span class="highlight">id</span>        String   @id @default(cuid())
+  <span class="highlight">email</span>     String   @unique
+  <span class="highlight">password</span>  String
+  <span class="highlight">name</span>      String?
+  createdAt DateTime @default(now())
+  videos    Video[]  @relation(<span class="highlight">"owner"</span>)
+  notebooks Notebook[]
+}
+</pre>
+  </div>
+  <div class="box" style="margin-top: 20px;">
+    <h3>🔗 关联关系</h3>
+    <ul>
+      <li><code>User → Video</code>: 一个用户拥有多个视频分析记录</li>
+      <li><code>User → Notebook</code>: 一个用户拥有多个笔记本</li>
+      <li><code>Video → KnowledgePoint</code>: 一个视频有多个知识点</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Slide 5: 登录 API 详解 -->
+<div class="slide">
+  <h1 class="slide-title">🔑 登录 API 详解</h1>
+  <h2>POST /api/auth/callback/credentials</h2>
+  <div class="card" style="margin-top: 20px;">
+<pre>
+<span class="highlight">1.</span> 用户提交 email + password
+<span class="highlight">2.</span> Prisma 查询用户: <code>prisma.user.findUnique({ where: { email } })</code>
+<span class="highlight">3.</span> bcrypt 比较密码: <code>await bcrypt.compare(password, user.password)</code>
+<span class="highlight">4.</span> 验证失败 → 抛出 CredentialsSignin
+<span class="highlight">5.</span> 验证成功 → NextAuth 生成 JWT
+<span class="highlight">6.</span> JWT Payload: { userId, email, role }
+</pre>
+  </div>
+  <div class="box">
+    <p><span class="highlight">bcrypt</span>: 密码哈希算法，每次哈希结果不同，需要 compare 验证</p>
+    <p><code>密码存储</code>: 用户密码永远明文存储，使用 bcrypt 哈希后存储</p>
+  </div>
+</div>
+
+<!-- Slide 6: JWT 回调函数 -->
+<div class="slide">
+  <h1 class="slide-title">🎫 JWT 回调函数</h1>
+  <div class="card">
+<pre>
+<span class="highlight">// callbacks.ts</span>
+export const callbacks = {
+  <span class="highlight">async jwt</span>({ token, user }) {
+    if (user) {
+      <span class="highlight">token.userId = user.id</span>
+      token.email = user.email
+    }
+    return token
+  },
+  <span class="highlight">async session</span>({ session, token }) {
+    if (session.user) {
+      <span class="highlight">session.user.id = token.userId</span>
+      session.user.email = token.email
+    }
+    return session
+  }
+}
+</pre>
+  </div>
+  <div class="box" style="margin-top: 20px;">
+    <p><span class="highlight">jwt()</span>: 登录时将用户ID写入JWT</p>
+    <p><span class="highlight">session()</span>: 每次请求时将JWT数据注入Session</p>
+  </div>
+</div>
+
+<!-- Slide 7: 路由保护 -->
+<div class="slide">
+  <h1 class="slide-title">🛡️ 路由保护</h1>
+  <div class="two-col">
+    <div class="card">
+      <h3>服务端组件保护</h3>
+<pre>
+<span class="highlight">// app/analyze/[bvid]/page.tsx</span>
+import { getServerSession } from <span class="highlight">"next-auth"</span>
+
+export default async function Page() {
+  const <span class="highlight">session = await getServerSession(authOptions)</span>
+  if (!session) {
+    redirect("/login")
+  }
+  // ... 渲染页面
+}
+</pre>
+    </div>
+    <div class="card">
+      <h3>API 路由保护</h3>
+<pre>
+<span class="highlight">// app/api/xxx/route.ts</span>
+export async function POST(req: Request) {
+  const <span class="highlight">session = await getServerSession(authOptions)</span>
+  if (!session?.user?.id) {
+    return Response.json({ error: "未登录" }, { status: 401 })
+  }
+  // ... 处理业务逻辑
+}
+</pre>
+    </div>
+  </div>
+  <div class="box" style="margin-top: 20px; text-align: center;">
+    <p><span class="highlight">getServerSession()</span>: 服务端获取当前会话，比 client 的 <code>useSession()</code> 更安全</p>
+  </div>
+</div>
+
+<!-- Slide 8: 中间件保护 -->
+<div class="slide">
+  <h1 class="slide-title">🌉 Middleware 中间件</h1>
+  <div class="card">
+<pre>
+<span class="highlight">// middleware.ts</span>
+export { from pagesManifest } from "_next/static/ssgManifest"
+
+export async function middleware(request: NextRequest) {
+  const <span class="highlight">session = await getToken</span>({
+    req: request,
+    secret: process.env.NEXTAUTH_SECRET
+  })
+
+  const isAuthPage = request.nextUrl.pathname.startsWith("/login")
+  const isApiAuth = request.nextUrl.pathname.startsWith("/api/auth")
+  const isPublic = ["/", "/search"].some(p => 
+    request.nextUrl.pathname.startsWith(p)
+  )
+
+  if (isAuthPage || isApiAuth || isPublic) {
+    return NextResponse.next()
+  }
+
+  if (!session) {
+    return NextResponse.redirect(new URL("/login", request.url))
+  }
+
+  return NextResponse.next()
+}
+</pre>
+  </div>
+  <div class="box" style="margin-top: 20px;">
+    <p><span class="highlight">作用</span>: 全局拦截请求，未登录用户自动重定向到登录页</p>
+    <p><span class="highlight">执行顺序</span>: Middleware → Pages → API Routes</p>
+  </div>
+</div>
+
+<!-- Slide 9: 注册流程 -->
+<div class="slide">
+  <h1 class="slide-title">📝 注册流程</h1>
+  <div class="flow" style="justify-content: center; flex-direction: column; align-items: center; gap: 20px;">
+    <div class="node" style="width: 300px;">
+      <div>👤 用户填写表单</div>
+      <div style="font-size: 14px; color: #8b8ba8;">email, password, name</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="node success" style="width: 300px;">
+      <div>🔍 检查邮箱是否已存在</div>
+      <div style="font-size: 14px; color: #8b8ba8;">prisma.user.findUnique</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="node warn" style="width: 300px;">
+      <div>🔐 密码加密</div>
+      <div style="font-size: 14px; color: #8b8ba8;">bcrypt.hash(password, 12)</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="node success" style="width: 300px;">
+      <div>💾 创建用户</div>
+      <div style="font-size: 14px; color: #8b8ba8;">prisma.user.create</div>
+    </div>
+    <div class="arrow">↓</div>
+    <div class="node" style="width: 300px;">
+      <div>🎫 自动登录</div>
+      <div style="font-size: 14px; color: #8b8ba8;">signIn() → 生成Session</div>
+    </div>
+  </div>
+</div>
+
+<!-- Slide 10: 安全要点 -->
+<div class="slide">
+  <h1 class="slide-title">🔒 安全要点</h1>
+  <table>
+    <tr>
+      <th>安全措施</th>
+      <th>说明</th>
+      <th>代码位置</th>
+    </tr>
+    <tr>
+      <td><span class="highlight">bcrypt 哈希</span></td>
+      <td>密码不可逆加密，即使数据库泄露也无法还原</td>
+      <td>prisma schema + register API</td>
+    </tr>
+    <tr>
+      <td><span class="highlight">JWT Secret</span></td>
+      <td>用于签名JWT令牌，防止伪造</td>
+      <td>.env.local NEXTAUTH_SECRET</td>
+    </tr>
+    <tr>
+      <td><span class="highlight">HTTP-only Cookie</span></td>
+      <td>JavaScript 无法访问，防止 XSS 盗取</td>
+      <td>NextAuth 配置</td>
+    </tr>
+    <tr>
+      <td><span class="highlight">CSRF Token</span></td>
+      <td>防止跨站请求伪造攻击</td>
+      <td>NextAuth 内置</td>
+    </tr>
+    <tr>
+      <td><span class="highlight">Session 校验</span></td>
+      <td>每个 API 和页面都验证用户身份</td>
+      <td>getServerSession()</td>
+    </tr>
+  </table>
+</div>
+
+<!-- Slide 11: 知识点总结 -->
+<div class="slide">
+  <h1 class="slide-title">📚 知识点总结</h1>
+  <div class="two-col">
+    <div class="card">
+      <h3>🔧 核心概念</h3>
+      <ul>
+        <li><span class="highlight">NextAuth.js v5</span>: Next.js 认证框架</li>
+        <li><span class="highlight">Credentials Provider</span>: 用户名密码登录</li>
+        <li><span class="highlight">JWT</span>: JSON Web Token，无状态认证</li>
+        <li><span class="highlight">Session</span>: 用户会话信息</li>
+        <li><span class="highlight">bcrypt</span>: 密码哈希算法</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>📁 关键文件</h3>
+      <ul>
+        <li><code>auth.ts</code>: NextAuth 配置</li>
+        <li><code>route.ts</code>: API 路由</li>
+        <li><code>callbacks.ts</code>: 回调函数</li>
+        <li><code>middleware.ts</code>: 全局拦截</li>
+        <li><code>schema.prisma</code>: 数据模型</li>
+      </ul>
+    </div>
+  </div>
+  <div class="box" style="margin-top: 20px; text-align: center;">
+    <p style="font-size: 24px;"><span class="highlight">核心思想</span>: 客户端不存储敏感信息，所有认证都在服务端完成</p>
+  </div>
+</div>
+
+<!-- Slide 12: 结束 -->
+<div class="slide" style="text-align: center;">
+  <div style="font-size: 80px; margin-bottom: 30px;">✅</div>
+  <h1 class="slide-title">认证系统解析完成</h1>
+  <p style="color: #8b8ba8; font-size: 24px; margin-top: 20px;">
+    视记 VideoNote - 将视频转化为知识
+  </p>
+  <div style="margin-top: 60px;">
+    <span class="tag">Next.js</span>
+    <span class="tag blue">NextAuth</span>
+    <span class="tag purple">Prisma</span>
+    <span class="tag">TypeScript</span>
+  </div>
+</div>
+
+</body>
+</html>

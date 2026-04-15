@@ -64,6 +64,7 @@
 | `/api/upowner/analyze` | POST | UP主全量分析 |
 | `/api/chat/rag` | POST | 跨视频RAG对话 |
 | `/api/skills/export` | POST | 导出笔记本为Skill |
+| `/api/skills/export-video` | POST | 导出单视频为Skill（需登录） |
 
 ## 数据流
 
@@ -81,8 +82,15 @@
 
 ### Skill 导出流程
 ```
+# 笔记本导出
 选择笔记本 → 查询关联知识点 → 结构化整理
-  → LLM润色 → 生成Markdown/System Prompt → 下载
+  → LLM润色 → 生成Markdown/System Prompt → ZIP下载
+
+# 单视频导出
+视频分析页 → 点击导出Skill → 右侧抽屉（进度动画）
+  → 生成SKILL.md / knowledge.json / system-prompt.md → ZIP下载
+  - 支持前端直传数据，无需先保存到数据库
+  - 需登录后使用
 ```
 
 ## 安全考量

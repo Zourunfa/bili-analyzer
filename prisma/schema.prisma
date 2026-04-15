@@ -9,16 +9,29 @@ datasource db {
 
 // 用户表
 model User {
-  id        String     @id @default(cuid())
-  email     String     @unique
-  name      String
-  avatar    String?
-  password  String     // bcrypt 哈希
-  notebooks Notebook[]
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id            String     @id @default(cuid())
+  email         String     @unique
+  name          String
+  avatar        String?
+  password      String     // bcrypt 哈希
+  emailVerified DateTime?  @map("email_verified_at")  // 邮箱验证时间
+  notebooks     Notebook[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 
   @@map("users")
+}
+
+// 邮箱验证 Token
+model EmailVerificationToken {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@map("email_verification_tokens")
 }
 
 // 笔记本

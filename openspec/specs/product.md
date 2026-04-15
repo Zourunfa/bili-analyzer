@@ -42,9 +42,11 @@
    - 按主题、概念、UP主筛选
 
 7. **Skill 导出**
-   - 将笔记本知识打包为 Markdown
+   - 单视频分析页直接导出为 Skill（右侧抽屉交互，ZIP 下载）
+   - 笔记本批量导出为 Skill（带 AI 生成指令层）
    - 生成可复用的 System Prompt
    - 导出为其他 AI 工具的 Skill 格式
+   - 保存笔记本、导出 Skill 均需登录
 
 ## 差异化优势
 | 维度 | 通用AI对话 | 视记 VideoNote |
