@@ -1,18 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { signIn, useSession } from "next-auth/react";
+import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { Input, Button, Tabs, Alert, Form, message } from "antd";
-import { MailOutlined, LockOutlined, UserOutlined, CheckCircleOutlined } from "@ant-design/icons";
+import { Input, Button, Tabs, Alert, Form } from "antd";
+import { MailOutlined, LockOutlined, UserOutlined } from "@ant-design/icons";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { data: session } = useSession();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState("login");
-  const [registerSuccess, setRegisterSuccess] = useState(false);
 
   const handleLogin = async (values: { email: string; password: string }) => {
     setError("");
@@ -26,12 +24,6 @@ export default function LoginPage() {
       if (result?.error) {
         setError("邮箱或密码错误");
       } else {
-        // 检查邮箱验证状态
-        const res = await fetch("/api/auth/session");
-        const data = await res.json();
-        if (data?.user?.emailVerified === null) {
-          message.warning("您的邮箱还未验证，请去邮箱点击验证链接");
-        }
         router.push("/");
         router.refresh();
       }
@@ -56,14 +48,9 @@ export default function LoginPage() {
         setError(data.error || "注册失败");
         return;
       }
-      if (data.emailSent) {
-        setRegisterSuccess(true);
-        message.success("注册成功！请去邮箱验证您的账号");
-        setActiveTab("login");
-      } else {
-        message.warning(data.message || "注册成功，但邮件发送失败");
-        setActiveTab("login");
-      }
+      // 注册成功，切换到登录页
+      setActiveTab("login");
+      setError("");
     } catch {
       setError("注册失败，请重试");
     } finally {

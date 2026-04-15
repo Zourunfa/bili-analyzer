@@ -1,18 +1,12 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import crypto from "crypto";
 import prisma from "@/lib/db";
-import { sendVerificationEmail } from "@/lib/email";
 
-// Token 有效期 24 小时
-const TOKEN_EXPIRY_HOURS = 24;
-
-/**
- * 生成验证 Token
- */
-function generateToken(): string {
-  return crypto.randomBytes(32).toString("hex");
-}
+// TODO: 临时禁用邮箱验证，后续服务器部署后启用
+// import crypto from "crypto";
+// import { sendVerificationEmail } from "@/lib/email";
+// const TOKEN_EXPIRY_HOURS = 24;
+// function generateToken(): string { return crypto.randomBytes(32).toString("hex"); }
 
 export async function POST(req: Request) {
   try {
@@ -39,41 +33,30 @@ export async function POST(req: Request) {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 创建用户（默认 emailVerified 为 null，表示未验证）
+    // 创建用户（邮箱验证暂不启用）
     const user = await prisma.user.create({
       data: { email, password: hashedPassword, name },
     });
 
-    // 生成验证 Token
-    const token = generateToken();
-    const expiresAt = new Date(Date.now() + TOKEN_EXPIRY_HOURS * 60 * 60 * 1000);
-
-    // 存储 Token
-    await prisma.emailVerificationToken.create({
-      data: { email, token, expiresAt },
-    });
-
-    // 发送验证邮件
-    try {
-      await sendVerificationEmail(email, name, token);
-    } catch (emailError) {
-      console.error("发送验证邮件失败:", emailError);
-      // 邮件发送失败不影响注册成功，但需要提示用户
-      return NextResponse.json({
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        emailSent: false,
-        message: "注册成功，但验证邮件发送失败，请联系管理员",
-      });
-    }
+    // TODO: 邮箱验证功能暂禁用，后续启用
+    // // 生成验证 Token
+    // const token = generateToken();
+    // const expiresAt = new Date(Date.now() + TOKEN_EXPIRY_HOURS * 60 * 60 * 1000);
+    // await prisma.emailVerificationToken.create({
+    //   data: { email, token, expiresAt },
+    // });
+    // // 发送验证邮件
+    // try {
+    //   await sendVerificationEmail(email, name, token);
+    // } catch (emailError) {
+    //   console.error("发送验证邮件失败:", emailError);
+    // }
 
     return NextResponse.json({
       id: user.id,
       email: user.email,
       name: user.name,
-      emailSent: true,
-      message: "注册成功，请去邮箱验证您的账号",
+      message: "注册成功",
     });
   } catch (err) {
     console.error("注册错误:", err);
