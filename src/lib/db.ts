@@ -7,8 +7,19 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createPrismaClient() {
-  const connectionString = process.env.DATABASE_URL;
-  const pool = new pg.Pool({ connectionString });
+  const rawConnectionString = process.env.DATABASE_URL?.trim();
+  if (!rawConnectionString) {
+    throw new Error("DATABASE_URL 未配置，无法连接数据库");
+  }
+
+  // Some environments resolve localhost to IPv6 (::1) first.
+  // If Postgres only listens on IPv4, this causes intermittent ECONNREFUSED.
+  const connectionString = rawConnectionString.replace(/@localhost(?=[:/?])/i, "@127.0.0.1");
+  const pool = new pg.Pool({
+    connectionString,
+    connectionTimeoutMillis: 6000,
+    idleTimeoutMillis: 30000,
+  });
   const adapter = new PrismaPg(pool);
   return new PrismaClient({ adapter });
 }

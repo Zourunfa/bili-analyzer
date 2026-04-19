@@ -16,6 +16,7 @@ model User {
   password      String     // bcrypt 哈希
   emailVerified DateTime?  @map("email_verified_at")  // 邮箱验证时间
   notebooks     Notebook[]
+  userVideos    UserVideo[]
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -69,11 +70,28 @@ model Video {
   knowledgeExtracted  Boolean          @default(false) @map("knowledge_extracted")
   notebookVideos      NotebookVideo[]
   knowledgePoints     KnowledgePoint[]
+  userVideos          UserVideo[]
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
 
   @@index([ownerMid])
   @@map("videos")
+}
+
+// 用户-视频历史关联（用于按用户隔离历史记录）
+model UserVideo {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  videoId   String   @map("video_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, videoId])
+  @@index([userId, updatedAt])
+  @@index([videoId])
+  @@map("user_videos")
 }
 
 // 笔记本-视频关联

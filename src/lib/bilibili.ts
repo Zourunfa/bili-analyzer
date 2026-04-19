@@ -5,6 +5,9 @@ import { join } from "path";
 import { Writable } from "stream";
 
 const BILIBILI_API_BASE = "https://api.bilibili.com";
+const DEFAULT_FETCH_TIMEOUT_MS = 12_000;
+const B23_TO_VIEW_COOLDOWN_MS = 180;
+const VIDEO_INFO_RETRY_BASE_MS = 550;
 
 // ==================== API 缓存与降频 ====================
 const apiCache = new Map<string, { data: unknown; expiresAt: number }>();
@@ -31,6 +34,78 @@ async function throttle() {
   lastApiCallAt = Date.now();
 }
 // ==================== END ====================
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message || "";
+  return String(error || "");
+}
+
+function getErrorCode(error: unknown): string {
+  if (!error || typeof error !== "object") return "";
+  const obj = error as Record<string, unknown>;
+  const direct = obj.code;
+  if (typeof direct === "string") return direct;
+  const cause = obj.cause;
+  if (cause && typeof cause === "object") {
+    const causeCode = (cause as Record<string, unknown>).code;
+    if (typeof causeCode === "string") return causeCode;
+  }
+  return "";
+}
+
+function isRetryableFetchError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  const code = getErrorCode(error);
+
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+  if (error instanceof TypeError && message.includes("fetch failed")) {
+    return true;
+  }
+  if (["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND", "UND_ERR_SOCKET"].includes(code)) {
+    return true;
+  }
+  return [
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "ECONNREFUSED",
+    "socket hang up",
+    "network",
+    "timeout",
+    "fetch failed",
+    "reset",
+  ].some((kw) => message.includes(kw));
+}
+
+function isRetryableApiError(code: unknown, message: unknown): boolean {
+  const codeNum = Number(code);
+  const msg = String(message || "");
+  if ([-412, -799, -352, 429].includes(codeNum)) {
+    return true;
+  }
+  return [
+    "request was banned",
+    "请求过于频繁",
+    "风控",
+    "timeout",
+    "访问权限不足",
+  ].some((kw) => msg.includes(kw));
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Cache anonymous cookies to avoid regenerating on every request
 let cachedCookies: string | null = null;
@@ -205,6 +280,18 @@ function getHeaders(extra?: { referer?: string }) {
   };
 }
 
+function getPublicHeaders(extra?: { referer?: string }) {
+  return {
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    Referer: extra?.referer || "https://www.bilibili.com",
+    Origin: "https://www.bilibili.com",
+    Connection: "close",
+  };
+}
+
 // 全局缓存的 buvid3，避免连续触发风控
 let globalBuvid3: string | null = null;
 
@@ -235,51 +322,186 @@ async function ensureBuvid3() {
 }
 
 /**
- * 从URL中提取BV号
+ * 解析 b23.tv 短链接，返回重定向后的完整 URL
+ * B站短链接可能返回 302/307，需要手动从 Location 头提取
  */
-export function extractBvId(url: string): string | null {
+async function resolveB23ShortUrl(shortUrl: string, maxRedirects = 5): Promise<string | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      console.log("[resolveB23ShortUrl] 请求:", shortUrl, "剩余跳转:", maxRedirects, "尝试:", attempt + 1);
+      const resp = await fetchWithTimeout(shortUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          Referer: "https://www.bilibili.com/",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          Connection: "close",
+        },
+        redirect: "manual",
+      }, 10_000);
+
+      console.log("[resolveB23ShortUrl] 状态码:", resp.status, "location:", resp.headers.get("location"));
+
+      if ([301, 302, 303, 307, 308].includes(resp.status)) {
+        const location = resp.headers.get("location");
+        if (location && maxRedirects > 0) {
+          const nextUrl = location.startsWith("http") ? location : new URL(location, shortUrl).toString();
+          // 如果重定向目标已经包含 bilibili 视频 URL，直接返回
+          if (nextUrl.includes("bilibili.com/video/")) {
+            console.log("[resolveB23ShortUrl] 重定向目标含视频URL:", nextUrl);
+            return nextUrl;
+          }
+          return resolveB23ShortUrl(nextUrl, maxRedirects - 1);
+        }
+      }
+
+      // 非重定向响应，尝试从 HTML 内容提取
+      const html = await resp.text();
+      const htmlMatch = html.match(/bilibili\.com\/video\/(BV[\w]+)/);
+      if (htmlMatch) {
+        console.log("[resolveB23ShortUrl] 从HTML提取到BV:", htmlMatch[1]);
+        return `https://www.bilibili.com/video/${htmlMatch[1]}`;
+      }
+
+      console.log("[resolveB23ShortUrl] 未找到视频URL, HTML长度:", html.length);
+      return null;
+    } catch (err) {
+      if (attempt < 2 && isRetryableFetchError(err)) {
+        const wait = 220 * (attempt + 1);
+        console.log("[resolveB23ShortUrl] 网络波动，重试前等待:", wait, "ms");
+        await sleep(wait);
+        continue;
+      }
+      console.log("[resolveB23ShortUrl] 请求失败:", err instanceof Error ? err.message : err);
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * 从URL中提取BV号（支持 b23.tv 短链接重定向解析）
+ */
+export async function extractBvId(url: string): Promise<string | null> {
+  console.log("[extractBvId] 原始输入:", JSON.stringify(url));
+
+  // 从混合文本中提取纯 URL（兼容 B站分享格式：【标题】 https://...）
+  const urlMatch = url.match(/https?:\/\/[^\s\]】]+/);
+  if (urlMatch) url = urlMatch[0];
+  console.log("[extractBvId] 提取URL后:", url);
+
+  // 标准链接和直接 BV 号
   const patterns = [
     /bilibili\.com\/video\/(BV[\w]+)/,
-    /b23\.tv\/(BV[\w]+)/,
     /^BV[\w]+$/,
   ];
 
   for (const pattern of patterns) {
     const match = url.match(pattern);
-    if (match) return match[1] || match[0];
+    if (match) {
+      console.log("[extractBvId] 标准匹配命中:", match[1] || match[0]);
+      return match[1] || match[0];
+    }
   }
+
+  // b23.tv 短链接（手机分享链接），需要请求跳转
+  if (url.includes("b23.tv")) {
+    console.log("[extractBvId] 检测到 b23.tv 短链接");
+    // 尝试从 URL 直接提取 BV（部分 b23.tv 短链接已包含 BV）
+    const bvMatch = url.match(/b23\.tv\/(BV[\w]+)/);
+    if (bvMatch) {
+      console.log("[extractBvId] b23 URL直接含BV:", bvMatch[1]);
+      return bvMatch[1];
+    }
+
+    // 否则请求重定向获取真实 URL
+    console.log("[extractBvId] 开始解析b23重定向...");
+    const finalUrl = await resolveB23ShortUrl(url);
+    console.log("[extractBvId] b23重定向结果:", finalUrl);
+    if (finalUrl) {
+      const bvFromRedirect = finalUrl.match(/bilibili\.com\/video\/(BV[\w]+)/);
+      if (bvFromRedirect) {
+        await sleep(B23_TO_VIEW_COOLDOWN_MS);
+        return bvFromRedirect[1];
+      }
+      // 手机端 m.bilibili.com 格式
+      const bvFromMobile = finalUrl.match(/m\.bilibili\.com\/video\/(BV[\w]+)/);
+      if (bvFromMobile) {
+        await sleep(B23_TO_VIEW_COOLDOWN_MS);
+        return bvFromMobile[1];
+      }
+    }
+  }
+
+  console.log("[extractBvId] 所有解析均失败");
   return null;
 }
 
 /**
- * 获取视频信息
+ * 获取视频信息（带重试）
  */
-export async function getVideoInfo(bvid: string): Promise<VideoInfo> {
-  const res = await fetch(
-    `${BILIBILI_API_BASE}/x/web-interface/view?bvid=${bvid}`,
-    { headers: getHeaders() }
-  );
-
-  const data = await res.json();
-
-  if (data.code !== 0) {
-    throw new Error(`获取视频信息失败: ${data.message}`);
-  }
-
-  const v = data.data;
-  return {
-    bvid: v.bvid,
-    aid: v.aid,
-    title: v.title,
-    desc: v.desc,
-    pic: v.pic,
-    owner: {
-      name: v.owner.name,
-      face: v.owner.face,
-    },
-    duration: v.duration,
-    cid: v.cid,
+export async function getVideoInfo(bvid: string, retries = 2): Promise<VideoInfo> {
+  const viewUrl = `${BILIBILI_API_BASE}/x/web-interface/view?bvid=${bvid}`;
+  const authedHeaders = {
+    ...getHeaders({ referer: `https://www.bilibili.com/video/${bvid}` }),
+    Connection: "close",
   };
+  const publicHeaders = getPublicHeaders({ referer: `https://www.bilibili.com/video/${bvid}` });
+
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const usePublicHeaders = attempt >= 2;
+      const headers = usePublicHeaders ? publicHeaders : authedHeaders;
+      const res = await fetchWithTimeout(viewUrl, { headers }, 10_000);
+      const raw = await res.text();
+
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(raw) as Record<string, unknown>;
+      } catch {
+        throw new Error(`获取视频信息失败: 响应非JSON（HTTP ${res.status}）`);
+      }
+
+      if ((data.code as number) !== 0) {
+        const apiCode = Number(data.code ?? -1);
+        const apiMessage = String(data.message || data.msg || "unknown");
+        if (attempt < retries && isRetryableApiError(apiCode, apiMessage)) {
+          const backoff = VIDEO_INFO_RETRY_BASE_MS * (attempt + 1);
+          console.log(`[getVideoInfo] API限流/波动 code=${apiCode}，第 ${attempt + 1} 次重试前等待 ${backoff}ms`);
+          await sleep(backoff);
+          continue;
+        }
+        throw new Error(`获取视频信息失败: ${apiMessage} (code: ${apiCode})`);
+      }
+
+      const v = ((data.data as Record<string, unknown> | undefined) || {});
+      return {
+        bvid: (v.bvid as string) || bvid,
+        aid: Number(v.aid || 0),
+        title: (v.title as string) || "",
+        desc: (v.desc as string) || "",
+        pic: (v.pic as string) || "",
+        owner: {
+          name: ((v.owner as Record<string, unknown> | undefined)?.name as string) || "",
+          face: ((v.owner as Record<string, unknown> | undefined)?.face as string) || "",
+        },
+        duration: Number(v.duration || 0),
+        cid: Number(v.cid || 0),
+      };
+    } catch (err) {
+      lastError = err;
+      if (attempt < retries && isRetryableFetchError(err)) {
+        const backoff = VIDEO_INFO_RETRY_BASE_MS * (attempt + 1);
+        console.log(`[getVideoInfo] 网络错误，第 ${attempt + 1} 次重试...`, getErrorCode(err) || getErrorMessage(err));
+        await sleep(backoff);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError || new Error("获取视频信息失败: 重试耗尽");
 }
 
 /**

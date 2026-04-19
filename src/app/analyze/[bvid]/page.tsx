@@ -95,6 +95,9 @@ export default function AnalyzePage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [currentStep, setCurrentStep] = useState<string>("collect");
   const [previewTab, setPreviewTab] = useState("SKILL.md");
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
+  const [mobileVideoMetaOpen, setMobileVideoMetaOpen] = useState(false);
 
   // 顶部链接输入框
   const [headerUrl, setHeaderUrl] = useState("");
@@ -127,9 +130,28 @@ export default function AnalyzePage() {
   const [historyVideos, setHistoryVideos] = useState<HistoryVideo[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyKeyword, setHistoryKeyword] = useState("");
+  const currentUserId = (session?.user as { id?: string } | undefined)?.id || "";
 
   const videoInfoRef = useRef<VideoInfo | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth <= 900);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
+
+  useEffect(() => {
+    if (isMobile) {
+      setMobilePanelOpen(false);
+      setMobileVideoMetaOpen(false);
+      return;
+    }
+    setMobilePanelOpen(true);
+    setMobileVideoMetaOpen(true);
+  }, [isMobile]);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -137,11 +159,19 @@ export default function AnalyzePage() {
   // 刷新历史视频列表
   const refreshHistory = useCallback(() => {
     fetch("/api/videos?pageSize=50&sort=createdAt_desc")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.videos) setHistoryVideos(data.videos);
+      .then(async (r) => {
+        if (!r.ok) {
+          setHistoryVideos([]);
+          return null;
+        }
+        return r.json();
       })
-      .catch(() => { /* 静默 */ });
+      .then((data) => {
+        if (data?.videos) setHistoryVideos(data.videos);
+      })
+      .catch(() => {
+        setHistoryVideos([]);
+      });
   }, []);
 
   // 切换到历史 Tab 时加载视频列表
@@ -149,13 +179,30 @@ export default function AnalyzePage() {
     if (sidebarTab !== "history") return;
     setHistoryLoading(true);
     fetch("/api/videos?pageSize=50&sort=createdAt_desc")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.videos) setHistoryVideos(data.videos);
+      .then(async (r) => {
+        if (!r.ok) {
+          setHistoryVideos([]);
+          return null;
+        }
+        return r.json();
       })
-      .catch(() => { /* 静默 */ })
+      .then((data) => {
+        if (data?.videos) setHistoryVideos(data.videos);
+      })
+      .catch(() => {
+        setHistoryVideos([]);
+      })
       .finally(() => setHistoryLoading(false));
   }, [sidebarTab]);
+
+  // 切换账号时，立即清空旧账号历史，避免 UI 残留造成“串号”错觉
+  useEffect(() => {
+    setHistoryVideos([]);
+    setHistoryKeyword("");
+    if (sidebarTab === "history" && authStatus === "authenticated") {
+      refreshHistory();
+    }
+  }, [currentUserId, authStatus, sidebarTab, refreshHistory]);
 
   // 点击历史视频：加载分析数据
   const handleSelectHistoryVideo = async (video: HistoryVideo) => {
@@ -659,10 +706,130 @@ export default function AnalyzePage() {
 
   const closeDrawer = () => setDrawerOpen(false);
 
+  const videoCardNode = videoInfo ? (
+    <Card
+      className="analyze-video-card"
+      size="small"
+      cover={
+        <div className="analyze-video-cover" style={{ width: "100%", aspectRatio: "16/9", background: "var(--card)", borderRadius: 8, overflow: "hidden" }}>
+          {videoInfo.pic ? (
+            <img
+              src={videoInfo.pic}
+              alt={videoInfo.title}
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="video-cover-placeholder">
+              <PlayCircleOutlined />
+            </div>
+          )}
+        </div>
+      }
+      styles={{ body: { padding: "12px 0 0" } }}
+    >
+      <Title level={5} style={{ marginBottom: 4, fontSize: 14, lineHeight: 1.4 }}>
+        {videoInfo.title}
+      </Title>
+      <Space size={8} wrap>
+        <Tag color="blue">{videoInfo.owner.name}</Tag>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          <PlayCircleOutlined /> {formatDuration(videoInfo.duration)}
+        </Text>
+      </Space>
+    </Card>
+  ) : null;
+
+  const sidebarTabsNode = (
+    <Tabs
+      activeKey={sidebarTab}
+      onChange={(key) => setSidebarTab(key as "subtitle" | "history")}
+      style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
+      items={[
+        {
+          key: "subtitle",
+          label: <span><FileTextOutlined /> 字幕</span>,
+          children: (
+            <div
+              style={{
+                height: "100%",
+                overflowY: "auto",
+                padding: "0 16px 16px",
+                fontSize: 12,
+                color: "var(--muted-foreground)",
+                whiteSpace: "pre-wrap",
+                lineHeight: 1.8,
+              }}
+            >
+              {subtitleText || "加载中..."}
+            </div>
+          ),
+        },
+        {
+          key: "history",
+          label: <span><HistoryOutlined /> 历史</span>,
+          children: (
+            <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: "8px 12px", flexShrink: 0 }}>
+                <Input
+                  size="small"
+                  placeholder="搜索标题或UP主..."
+                  prefix={<SearchOutlined />}
+                  allowClear
+                  value={historyKeyword}
+                  onChange={(e) => setHistoryKeyword(e.target.value)}
+                />
+              </div>
+              <div style={{ flex: 1, overflowY: "auto" }}>
+                {historyLoading ? (
+                  <div style={{ textAlign: "center", padding: 32 }}>
+                    <Spin size="small" />
+                  </div>
+                ) : filteredHistory.length === 0 ? (
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={<Text type="secondary">{historyKeyword ? "没有匹配的视频" : "还没有分析过视频"}</Text>}
+                    style={{ padding: "24px 0" }}
+                  />
+                ) : (
+                  <div style={{ padding: "0 12px 12px" }}>
+                    {filteredHistory.map((v) => (
+                      <div
+                        key={v.id}
+                        className={`history-item ${v.bvid === bvid ? "history-item-active" : ""}`}
+                        onClick={() => handleSelectHistoryVideo(v)}
+                      >
+                        <div className="history-item-cover">
+                          {v.pic ? (
+                            <img src={v.pic} alt={v.title} />
+                          ) : (
+                            <div className="history-item-placeholder">
+                              <PlayCircleOutlined />
+                            </div>
+                          )}
+                          <span className="history-item-duration">{formatDuration(v.duration)}</span>
+                        </div>
+                        <div className="history-item-info">
+                          <div className="history-item-title">{v.title}</div>
+                          <div className="history-item-owner">{v.ownerName}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ),
+        },
+      ]}
+    />
+  );
+
   return (
     <Layout style={{ height: "calc(100vh - 56px)", minHeight: 0 }}>
       {/* Header */}
       <Header
+        className="analyze-header"
         style={{
           display: "flex",
           alignItems: "center",
@@ -674,16 +841,15 @@ export default function AnalyzePage() {
           lineHeight: "52px",
         }}
       >
-        <Link href="/" style={{ fontWeight: 700, fontSize: 16, color: "#fb7299", display: "flex", alignItems: "center", gap: 6 }}>
+        <Link href="/" className="header-back-link" style={{ fontWeight: 700, fontSize: 16, color: "#fb7299", display: "flex", alignItems: "center", gap: 6 }}>
           <ArrowLeftOutlined /> {isHistoryMode ? "历史分析" : "B站视频分析"}
         </Link>
         {videoInfo && (
-          <Text type="secondary" ellipsis style={{ maxWidth: 240, fontSize: 13 }}>
+          <Text className="header-video-title" type="secondary" ellipsis style={{ maxWidth: 240, fontSize: 13 }}>
             {videoInfo.title}
           </Text>
         )}
-        <div style={{ flex: 1 }} />
-        <Space.Compact style={{ maxWidth: 380, flex: 1 }}>
+        <Space.Compact className="header-search" style={{ maxWidth: 380, flex: 1 }}>
           <Input
             size="small"
             value={headerUrl}
@@ -704,7 +870,7 @@ export default function AnalyzePage() {
             分析
           </Button>
         </Space.Compact>
-        <div style={{ flex: 1 }} />
+        <div className="header-actions">
         <Button
           icon={<SaveOutlined style={{ color: "bisque" }}/>}
           onClick={handleOpenSaveModal}
@@ -722,140 +888,78 @@ export default function AnalyzePage() {
         >
           导出 Skill
         </Button>
+        </div>
       </Header>
 
       <Layout style={{ flex: 1, overflow: "hidden", minHeight: 0 }}>
         {/* Left Sidebar: Video Info + Tabs (字幕/历史) */}
-        <Sider
-          width={360}
-          style={{
-            background: "transparent",
-            borderRight: "1px solid var(--border)",
-            overflow: "hidden",
-          }}
-        >
-          {/* Video Card */}
-          {videoInfo && (
-            <div style={{ padding: 16 }}>
-              <Card
-                size="small"
-                cover={
-                  <div style={{ width: "100%", aspectRatio: "16/9", background: "var(--card)", borderRadius: 8, overflow: "hidden" }}>
-                    <img
-                      src={videoInfo.pic}
-                      alt={videoInfo.title}
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-                }
-                styles={{ body: { padding: "12px 0 0" } }}
-              >
-                <Title level={5} style={{ marginBottom: 4, fontSize: 14, lineHeight: 1.4 }}>
-                  {videoInfo.title}
-                </Title>
-                <Space size={8}>
-                  <Tag color="blue">{videoInfo.owner.name}</Tag>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    <PlayCircleOutlined /> {formatDuration(videoInfo.duration)}
-                  </Text>
-                </Space>
-              </Card>
-            </div>
-          )}
-
-          <Divider style={{ margin: 0 }} />
-
-          {/* 字幕 / 历史 Tab */}
-          <Tabs
-            activeKey={sidebarTab}
-            onChange={(key) => setSidebarTab(key as "subtitle" | "history")}
-            style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
-            items={[
-              {
-                key: "subtitle",
-                label: <span><FileTextOutlined /> 字幕</span>,
-                children: (
-                  <div
-                    style={{
-                      height: "100%",
-                      overflowY: "auto",
-                      padding: "0 16px 16px",
-                      fontSize: 12,
-                      color: "var(--muted-foreground)",
-                      whiteSpace: "pre-wrap",
-                      lineHeight: 1.8,
-                    }}
-                  >
-                    {subtitleText || "加载中..."}
-                  </div>
-                ),
-              },
-              {
-                key: "history",
-                label: <span><HistoryOutlined /> 历史</span>,
-                children: (
-                  <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-                    <div style={{ padding: "8px 12px", flexShrink: 0 }}>
-                      <Input
-                        size="small"
-                        placeholder="搜索标题或UP主..."
-                        prefix={<SearchOutlined />}
-                        allowClear
-                        value={historyKeyword}
-                        onChange={(e) => setHistoryKeyword(e.target.value)}
-                      />
-                    </div>
-                    <div style={{ flex: 1, overflowY: "auto" }}>
-                      {historyLoading ? (
-                        <div style={{ textAlign: "center", padding: 32 }}>
-                          <Spin size="small" />
-                        </div>
-                      ) : filteredHistory.length === 0 ? (
-                        <Empty
-                          image={Empty.PRESENTED_IMAGE_SIMPLE}
-                          description={<Text type="secondary">{historyKeyword ? "没有匹配的视频" : "还没有分析过视频"}</Text>}
-                          style={{ padding: "24px 0" }}
-                        />
-                      ) : (
-                        <div style={{ padding: "0 12px 12px" }}>
-                          {filteredHistory.map((v) => (
-                            <div
-                              key={v.id}
-                              className={`history-item ${v.bvid === bvid ? "history-item-active" : ""}`}
-                              onClick={() => handleSelectHistoryVideo(v)}
-                            >
-                              <div className="history-item-cover">
-                                {v.pic ? (
-                                  <img src={v.pic} alt={v.title} />
-                                ) : (
-                                  <div className="history-item-placeholder">
-                                    <PlayCircleOutlined />
-                                  </div>
-                                )}
-                                <span className="history-item-duration">{formatDuration(v.duration)}</span>
-                              </div>
-                              <div className="history-item-info">
-                                <div className="history-item-title">{v.title}</div>
-                                <div className="history-item-owner">{v.ownerName}</div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ),
-              },
-            ]}
-          />
-        </Sider>
+        {!isMobile && (
+          <Sider
+            width={360}
+            style={{
+              background: "transparent",
+              borderRight: "1px solid var(--border)",
+              overflow: "hidden",
+            }}
+          >
+            {videoCardNode && <div style={{ padding: 16 }}>{videoCardNode}</div>}
+            <Divider style={{ margin: 0 }} />
+            {sidebarTabsNode}
+          </Sider>
+        )}
 
         {/* Right Content: Summary + Chat */}
         <Content style={{ display: "flex", flexDirection: "column", background: "transparent", overflow: "hidden", minHeight: 0 }}>
+          {isMobile && (
+            <div className="mobile-side-panel-wrap">
+              <div className="mobile-panel-toggle-row">
+                <Button
+                  size="small"
+                  icon={<PlayCircleOutlined />}
+                  onClick={() => setMobileVideoMetaOpen((v) => !v)}
+                >
+                  {mobileVideoMetaOpen ? "收起视频信息" : "视频信息"}
+                </Button>
+                <Button
+                  size="small"
+                  icon={<FileTextOutlined />}
+                  onClick={() => {
+                    setSidebarTab("subtitle");
+                    setMobilePanelOpen((v) => !v);
+                  }}
+                >
+                  {mobilePanelOpen && sidebarTab === "subtitle" ? "收起字幕" : "展开字幕"}
+                </Button>
+                <Button
+                  size="small"
+                  icon={<HistoryOutlined />}
+                  onClick={() => {
+                    setSidebarTab("history");
+                    setMobilePanelOpen(true);
+                  }}
+                >
+                  历史
+                </Button>
+              </div>
+              {mobileVideoMetaOpen && videoCardNode && (
+                <div className="mobile-video-meta-card">{videoCardNode}</div>
+              )}
+              <div className="mobile-panel-toggle-row">
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  默认优先展示摘要，字幕按需展开
+                </Text>
+              </div>
+              {mobilePanelOpen && (
+                <div className="mobile-side-panel-card">
+                  {sidebarTabsNode}
+                </div>
+              )}
+            </div>
+          )}
           <Tabs
             activeKey={activeTab}
             onChange={(key) => setActiveTab(key as "summary" | "chat")}
+            className={isMobile ? "main-tabs-mobile" : ""}
             style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
             items={[
               {
@@ -1363,6 +1467,47 @@ export default function AnalyzePage() {
           display: flex;
           gap: 12px;
         }
+        .video-cover-placeholder {
+          width: 100%;
+          height: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--muted-foreground);
+          font-size: 28px;
+          background: rgba(255, 255, 255, 0.03);
+        }
+        .analyze-header .header-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .mobile-side-panel-wrap {
+          padding: 12px 12px 0;
+          border-bottom: 1px solid var(--border);
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
+        }
+        .mobile-panel-toggle-row {
+          display: flex;
+          gap: 8px;
+          margin-bottom: 8px;
+          flex-wrap: wrap;
+          align-items: center;
+        }
+        .mobile-video-meta-card {
+          margin-bottom: 8px;
+        }
+        .mobile-side-panel-card {
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          overflow: hidden;
+          margin-bottom: 12px;
+          height: 40vh;
+          min-height: 220px;
+          max-height: 360px;
+          background: rgba(15, 15, 40, 0.6);
+          backdrop-filter: blur(6px);
+        }
         @media (max-width: 600px) {
           .skill-drawer {
             width: 100%;
@@ -1532,6 +1677,74 @@ export default function AnalyzePage() {
           margin: 16px 0;
           border: none;
           border-top: 1px solid var(--border);
+        }
+        @media (max-width: 900px) {
+          .analyze-header {
+            height: auto !important;
+            line-height: normal !important;
+            padding: 10px 12px !important;
+            display: grid !important;
+            grid-template-columns: 1fr auto;
+            grid-template-areas:
+              "back actions"
+              "search search";
+            gap: 10px;
+          }
+          .analyze-header .header-back-link {
+            grid-area: back;
+            font-size: 14px !important;
+            line-height: 1.2;
+          }
+          .analyze-header .header-video-title {
+            display: none;
+          }
+          .analyze-header .header-search {
+            grid-area: search;
+            width: 100%;
+            max-width: none !important;
+          }
+          .analyze-header .header-actions {
+            grid-area: actions;
+            justify-content: flex-end;
+            gap: 6px;
+          }
+          .analyze-header .header-actions .ant-btn {
+            padding: 0 10px;
+            font-size: 12px;
+          }
+          .main-tabs-mobile > .ant-tabs-nav {
+            padding: 0 10px;
+          }
+          .main-tabs-mobile .ant-tabs-tab {
+            padding: 10px 12px;
+            font-size: 13px;
+          }
+          .main-tabs-mobile .ant-tabs-tabpane > div {
+            padding: 14px !important;
+          }
+          .main-tabs-mobile .markdown-body {
+            font-size: 13px;
+            line-height: 1.75;
+          }
+          .main-tabs-mobile .markdown-body h1 {
+            font-size: 18px;
+          }
+          .main-tabs-mobile .markdown-body h2 {
+            font-size: 16px;
+          }
+          .mobile-side-panel-wrap .analyze-video-card {
+            margin-bottom: 0;
+          }
+          .mobile-side-panel-wrap .analyze-video-cover {
+            aspect-ratio: 16 / 6 !important;
+            max-height: 132px;
+          }
+          .mobile-side-panel-wrap .analyze-video-card .ant-card-body {
+            padding-top: 8px !important;
+          }
+          .mobile-side-panel-wrap .analyze-video-card .ant-typography {
+            margin-bottom: 2px !important;
+          }
         }
       `}</style>
     </Layout>
