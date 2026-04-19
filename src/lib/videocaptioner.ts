@@ -6,6 +6,11 @@ import { randomUUID } from "crypto";
 const VC = "videocaptioner";
 const TMP_BASE = "/tmp/bilibili-subtitle";
 
+function getEnvMs(name: string, fallback: number): number {
+  const raw = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(raw) && raw > 10_000 ? raw : fallback;
+}
+
 interface SubtitleItem {
   from: number;
   to: number;
@@ -71,6 +76,7 @@ export async function downloadAudio(bvid: string): Promise<string> {
 export async function transcribeAudio(
   videoPath: string
 ): Promise<string> {
+  const transcribeTimeoutMs = getEnvMs("TRANSCRIBE_TIMEOUT_MS", 900_000);
   const workDir = join(TMP_BASE, randomUUID());
   await mkdir(workDir, { recursive: true });
 
@@ -82,7 +88,7 @@ export async function transcribeAudio(
     "--format", "srt",
     "-o", outputPath,
     "-q",
-  ]);
+  ], transcribeTimeoutMs);
 
   const srtText = await readFile(outputPath, "utf-8");
   return srtText;

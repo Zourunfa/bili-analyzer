@@ -583,6 +583,13 @@ export async function downloadAudioViaApi(
   cid: number,
   onProgress?: (percent: number, downloaded: string, total: string) => void
 ): Promise<string> {
+  const maxAudioMBRaw = Number.parseInt(process.env.TRANSCRIBE_MAX_AUDIO_MB || "60", 10);
+  const maxAudioMB = Number.isFinite(maxAudioMBRaw) && maxAudioMBRaw > 0 ? maxAudioMBRaw : 60;
+  const maxAudioBytes = maxAudioMB * 1024 * 1024;
+  const downloadTimeoutRaw = Number.parseInt(process.env.AUDIO_DOWNLOAD_TIMEOUT_MS || "300000", 10);
+  const downloadTimeoutMs =
+    Number.isFinite(downloadTimeoutRaw) && downloadTimeoutRaw > 10_000 ? downloadTimeoutRaw : 300_000;
+
   const { imgKey, subKey } = await getWbiKeys();
 
   // 请求 DASH 格式的视频流信息
@@ -624,46 +631,76 @@ export async function downloadAudioViaApi(
 
   console.log(`[bilibili] 开始下载音频: ${audioUrl.slice(0, 80)}...`);
 
-  const audioRes = await fetch(audioUrl, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      Referer: "https://www.bilibili.com",
-    },
-  });
+  const downloadController = new AbortController();
+  const timeoutHandle = setTimeout(() => downloadController.abort(), downloadTimeoutMs);
 
-  if (!audioRes.ok) {
-    throw new Error(`下载音频失败: HTTP ${audioRes.status}`);
-  }
+  try {
+    const audioRes = await fetch(audioUrl, {
+      signal: downloadController.signal,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: "https://www.bilibili.com",
+      },
+    });
 
-  // 流式下载，支持进度回调
-  const contentLength = parseInt(audioRes.headers.get("content-length") || "0", 10);
-  const totalMB = contentLength ? (contentLength / 1024 / 1024).toFixed(1) : "?";
-  let downloaded = 0;
-
-  const fileStream = (await import("fs")).createWriteStream(outputPath);
-  const reader = audioRes.body?.getReader();
-
-  if (!reader) {
-    throw new Error("无法读取音频流");
-  }
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    fileStream.write(value);
-    downloaded += value.length;
-    if (onProgress && contentLength) {
-      const percent = Math.round((downloaded / contentLength) * 100);
-      onProgress(percent, (downloaded / 1024 / 1024).toFixed(1), totalMB);
+    if (!audioRes.ok) {
+      throw new Error(`下载音频失败: HTTP ${audioRes.status}`);
     }
+
+    // 流式下载，支持进度回调
+    const contentLength = parseInt(audioRes.headers.get("content-length") || "0", 10);
+    if (contentLength > maxAudioBytes) {
+      throw new Error(`音频过大（${(contentLength / 1024 / 1024).toFixed(1)}MB），超过限制 ${maxAudioMB}MB`);
+    }
+    const totalMB = contentLength ? (contentLength / 1024 / 1024).toFixed(1) : "?";
+    let downloaded = 0;
+
+    const fileStream = (await import("fs")).createWriteStream(outputPath);
+    const reader = audioRes.body?.getReader();
+
+    if (!reader) {
+      throw new Error("无法读取音频流");
+    }
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      downloaded += value.length;
+      if (downloaded > maxAudioBytes) {
+        reader.cancel().catch(() => { /* ignore */ });
+        fileStream.destroy();
+        throw new Error(`音频过大（>${maxAudioMB}MB），请换短一点的视频后重试`);
+      }
+
+      const canContinue = fileStream.write(value);
+      if (!canContinue) {
+        await new Promise<void>((resolve, reject) => {
+          fileStream.once("drain", () => resolve());
+          fileStream.once("error", reject);
+        });
+      }
+
+      if (onProgress && contentLength) {
+        const percent = Math.round((downloaded / contentLength) * 100);
+        onProgress(percent, (downloaded / 1024 / 1024).toFixed(1), totalMB);
+      }
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      fileStream.once("finish", () => resolve());
+      fileStream.once("error", reject);
+      fileStream.end();
+    });
+
+    console.log(`[bilibili] 音频下载完成: ${outputPath} (${(downloaded / 1024 / 1024).toFixed(1)}MB)`);
+
+    return outputPath;
+  } finally {
+    clearTimeout(timeoutHandle);
   }
-
-  fileStream.end();
-
-  console.log(`[bilibili] 音频下载完成: ${outputPath} (${(downloaded / 1024 / 1024).toFixed(1)}MB)`);
-
-  return outputPath;
 }
 
 type UpownerVideo = {

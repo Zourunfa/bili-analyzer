@@ -12,6 +12,7 @@ import { generateEmbedding, toVectorString } from "@/lib/embedding";
 import { KNOWLEDGE_EXTRACTION_PROMPT } from "@/lib/prompts";
 import { qwen } from "@/lib/qwen";
 import { cleanup, parseSrt, transcribeAudio } from "@/lib/videocaptioner";
+import { acquireTranscribeSlot } from "@/lib/transcribe-guard";
 
 type BiliCookieSet = {
   sessdata?: string;
@@ -216,7 +217,9 @@ async function getSubtitleWithTranscribeFallback(
 
   let audioPath: string | undefined;
   let workDir: string | undefined;
+  let releaseSlot: (() => void) | undefined;
   try {
+    releaseSlot = await acquireTranscribeSlot();
     audioPath = await downloadAudioViaApi(bvid, cid);
     workDir = audioPath.slice(0, Math.max(0, audioPath.lastIndexOf("/")));
     const srtText = await transcribeAudio(audioPath);
@@ -236,6 +239,7 @@ async function getSubtitleWithTranscribeFallback(
   } catch (err) {
     throw new Error(`字幕获取失败（无 CC 且转写失败）: ${normalizeErrorMessage(err)}`);
   } finally {
+    if (releaseSlot) releaseSlot();
     if (audioPath) await cleanup(audioPath);
     if (workDir) await cleanup(workDir);
   }

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { downloadAudioViaApi, subtitleToText } from "@/lib/bilibili";
 import { transcribeAudio, parseSrt, cleanup } from "@/lib/videocaptioner";
+import { acquireTranscribeSlot, getTranscribeLoad } from "@/lib/transcribe-guard";
 
 export async function POST(req: NextRequest) {
   const { bvid, cid } = await req.json();
@@ -15,6 +16,8 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   let audioPath: string | undefined;
   let workDir: string | undefined;
+  let releaseSlot: (() => void) | undefined;
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -23,6 +26,19 @@ export async function POST(req: NextRequest) {
       };
 
       try {
+        const load = getTranscribeLoad();
+        send({
+          type: "status",
+          message: `转写资源: 运行中 ${load.active}/${load.max}，排队 ${load.queued}`,
+        });
+
+        releaseSlot = await acquireTranscribeSlot((queuePosition) => {
+          send({
+            type: "status",
+            message: `当前转写任务较多，已进入队列（前方 ${queuePosition} 个）...`,
+          });
+        });
+
         // Step 1: 下载音频（带进度）
         send({ type: "status", message: "正在下载音频..." });
 
@@ -34,12 +50,16 @@ export async function POST(req: NextRequest) {
 
         // Step 2: 语音转写
         send({ type: "status", message: "正在语音转写..." });
+        heartbeatTimer = setInterval(() => {
+          send({ type: "status", message: "正在语音转写，请稍候..." });
+        }, 15_000);
 
         const srtText = await transcribeAudio(audioPath);
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = undefined;
 
         if (!srtText.trim()) {
           send({ type: "error", error: "语音转写结果为空" });
-          controller.close();
           return;
         }
 
@@ -60,6 +80,8 @@ export async function POST(req: NextRequest) {
         const message = err instanceof Error ? err.message : "转写失败";
         send({ type: "error", error: message });
       } finally {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        if (releaseSlot) releaseSlot();
         if (audioPath) await cleanup(audioPath);
         if (workDir) await cleanup(workDir);
         controller.close();
