@@ -274,14 +274,26 @@ export default function AnalyzePage() {
       const reader = sumRes.body?.getReader();
       const decoder = new TextDecoder();
       if (reader) {
-        let acc = "";
+        let sseBuffer = "";
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          acc += decoder.decode(value, { stream: true });
-          setSummary(acc);
+          sseBuffer += decoder.decode(value, { stream: true });
+          const lines = sseBuffer.split("\n");
+          sseBuffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === "text") {
+                result += event.content;
+                setSummary(result);
+              } else if (event.type === "error") {
+                setError(event.message || "生成摘要失败");
+              }
+            } catch { /* ignore parse errors */ }
+          }
         }
-        result = acc;
       }
     } catch {
       setError("生成摘要失败");
