@@ -497,18 +497,34 @@ export default function AnalyzePage() {
         const decoder = new TextDecoder();
         if (reader) {
           setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+          let sseBuffer = "";
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            setMessages((prev) => {
-              const updated = [...prev];
-              updated[updated.length - 1] = {
-                ...updated[updated.length - 1],
-                content: updated[updated.length - 1].content + chunk,
-              };
-              return updated;
-            });
+            sseBuffer += decoder.decode(value, { stream: true });
+            const lines = sseBuffer.split("\n");
+            sseBuffer = lines.pop() || "";
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              try {
+                const event = JSON.parse(line.slice(6));
+                if (event.type === "text") {
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    updated[updated.length - 1] = {
+                      ...updated[updated.length - 1],
+                      content: updated[updated.length - 1].content + event.content,
+                    };
+                    return updated;
+                  });
+                } else if (event.type === "error") {
+                  setMessages((prev) => [
+                    ...prev,
+                    { role: "assistant", content: event.message || "抱歉，回复失败。" },
+                  ]);
+                }
+              } catch { /* ignore parse errors */ }
+            }
           }
         }
       } catch {
