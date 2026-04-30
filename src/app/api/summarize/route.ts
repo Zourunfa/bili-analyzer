@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { streamText } from "ai";
-import { qwen } from "@/lib/qwen";
+import { getAnalyzeModel, qwen } from "@/lib/qwen";
 import { SUMMARY_SYSTEM_PROMPT } from "@/lib/prompts";
 
 export async function POST(req: NextRequest) {
@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
     }
 
     const result = streamText({
-      model: qwen("qwen-plus"),
+      model: qwen(getAnalyzeModel()),
       system: SUMMARY_SYSTEM_PROMPT,
       messages: [
         {

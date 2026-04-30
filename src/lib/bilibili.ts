@@ -3,11 +3,14 @@ import { mkdir, writeFile } from "fs/promises";
 import { createWriteStream, existsSync } from "fs";
 import { join } from "path";
 import { Writable } from "stream";
+import { getScopedCookieSet } from "@/lib/bilibili-auth";
 
 const BILIBILI_API_BASE = "https://api.bilibili.com";
 const DEFAULT_FETCH_TIMEOUT_MS = 12_000;
 const B23_TO_VIEW_COOLDOWN_MS = 180;
 const VIDEO_INFO_RETRY_BASE_MS = 550;
+const WBI_KEY_CACHE_TTL_MS = 10 * 60 * 1000;
+const WBI_KEY_FAILURE_COOLDOWN_MS = 25_000;
 
 // ==================== API 缓存与降频 ====================
 const apiCache = new Map<string, { data: unknown; expiresAt: number }>();
@@ -181,41 +184,22 @@ interface SubtitleItem {
   content: string;
 }
 
+type WbiKeysSnapshot = {
+  imgKey: string;
+  subKey: string;
+  isLogin: boolean;
+  cookieFingerprint: string;
+  expiresAt: number;
+};
+
+type WbiFailureSnapshot = {
+  reason: string;
+  until: number;
+  cookieFingerprint: string;
+};
+
 function getMixinKey(raw: string): string {
   return MIXIN_KEY_ENC_TAB.map((i) => raw[i]).join("").slice(0, 32);
-}
-
-async function getWbiKeys(): Promise<{ imgKey: string; subKey: string }> {
-  const res = await fetch(`${BILIBILI_API_BASE}/x/web-interface/nav`, {
-    headers: getHeaders(),
-  });
-  const data = await res.json();
-
-  // 检查登录态
-  const isLogin = data.data?.isLogin === true;
-  const sessdata = process.env.BILIBILI_SESSDATA;
-  cachedLoginStatus = isLogin;
-  if (sessdata) {
-    console.log(`[bilibili] SESSDATA 登录态: ${isLogin ? "有效 ✓" : "无效 ✗ — B站未识别此 SESSDATA"}`);
-  } else {
-    console.log("[bilibili] 未配置 BILIBILI_SESSDATA（匿名访问）");
-  }
-
-  const wbiImg = data.data?.wbi_img;
-  if (!wbiImg) {
-    throw new Error(`WBI keys 获取失败，nav 响应: code=${data.code}, message=${data.message}`);
-  }
-  const imgUrl = wbiImg.img_url || wbiImg.url;
-  const subUrl = wbiImg.sub_url;
-
-  if (!imgUrl || !subUrl) {
-    throw new Error(`WBI keys 获取失败，wbi_img: ${JSON.stringify(wbiImg)}`);
-  }
-
-  const imgKey = imgUrl.split("/").pop()!.split(".")[0];
-  const subKey = subUrl.split("/").pop()!.split(".")[0];
-
-  return { imgKey, subKey };
 }
 
 function signWbiParams(params: Record<string, string>, imgKey: string, subKey: string): string {
@@ -253,16 +237,28 @@ function normalizeSessdata(raw: string): string {
   return val;
 }
 
+function getActiveCookieSet() {
+  const scoped = getScopedCookieSet();
+  return {
+    sessdata: normalizeSessdata(scoped?.sessdata ?? process.env.BILIBILI_SESSDATA ?? ""),
+    dedeUserId: (scoped?.dedeUserId ?? process.env.BILIBILI_DEDE_USERID ?? "").trim(),
+    biliJct: (scoped?.biliJct ?? process.env.BILIBILI_BILI_JCT ?? "").trim(),
+  };
+}
+
+function getCookieFingerprint(): string {
+  const active = getActiveCookieSet();
+  const raw = `${active.sessdata}|${active.dedeUserId}|${active.biliJct}`;
+  return raw.trim() ? md5(raw).slice(0, 16) : "anonymous";
+}
+
 function getHeaders(extra?: { referer?: string }) {
-  const raw = process.env.BILIBILI_SESSDATA || "";
-  const sessdata = normalizeSessdata(raw);
-  const dedeUserId = (process.env.BILIBILI_DEDE_USERID || "").trim();
-  const biliJct = (process.env.BILIBILI_BILI_JCT || "").trim();
+  const active = getActiveCookieSet();
 
   const cookies: string[] = [];
-  if (sessdata) cookies.push(`SESSDATA=${sessdata}`);
-  if (dedeUserId) cookies.push(`DedeUserID=${dedeUserId}`);
-  if (biliJct) cookies.push(`bili_jct=${biliJct}`);
+  if (active.sessdata) cookies.push(`SESSDATA=${active.sessdata}`);
+  if (active.dedeUserId) cookies.push(`DedeUserID=${active.dedeUserId}`);
+  if (active.biliJct) cookies.push(`bili_jct=${active.biliJct}`);
   return {
     Cookie: cookies.join("; "),
     "User-Agent":
@@ -295,8 +291,107 @@ function getPublicHeaders(extra?: { referer?: string }) {
 // 全局缓存的 buvid3，避免连续触发风控
 let globalBuvid3: string | null = null;
 
-// 缓存 B站登录态（由 getWbiKeys 设置）
-let cachedLoginStatus: boolean | null = null;
+// WBI key 缓存与短期熔断
+let cachedWbiKeys: WbiKeysSnapshot | null = null;
+let cachedWbiFailure: WbiFailureSnapshot | null = null;
+
+function isRetryableWbiError(err: unknown): boolean {
+  if (isRetryableFetchError(err)) return true;
+  const message = getErrorMessage(err);
+  return isRetryableApiError(-1, message);
+}
+
+async function getWbiKeys(): Promise<{ imgKey: string; subKey: string; isLogin: boolean }> {
+  const now = Date.now();
+  const cookieFingerprint = getCookieFingerprint();
+
+  if (
+    cachedWbiKeys &&
+    cachedWbiKeys.cookieFingerprint === cookieFingerprint &&
+    now < cachedWbiKeys.expiresAt
+  ) {
+    return {
+      imgKey: cachedWbiKeys.imgKey,
+      subKey: cachedWbiKeys.subKey,
+      isLogin: cachedWbiKeys.isLogin,
+    };
+  }
+
+  if (
+    cachedWbiFailure &&
+    cachedWbiFailure.cookieFingerprint === cookieFingerprint &&
+    now < cachedWbiFailure.until
+  ) {
+    const remain = Math.ceil((cachedWbiFailure.until - now) / 1000);
+    throw new Error(`WBI keys 请求冷却中（剩余 ${remain}s）: ${cachedWbiFailure.reason}`);
+  }
+
+  await throttle();
+
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetchWithTimeout(
+        `${BILIBILI_API_BASE}/x/web-interface/nav`,
+        { headers: getHeaders() },
+        10_000
+      );
+      const data = await res.json();
+      const code = Number(data?.code ?? -1);
+      const message = String(data?.message || data?.msg || "");
+
+      if (code !== 0) {
+        throw new Error(`nav 响应异常: code=${code}, message=${message || "unknown"}`);
+      }
+
+      const isLogin = data.data?.isLogin === true;
+      const hasSessdata = Boolean(getActiveCookieSet().sessdata);
+      if (hasSessdata) {
+        console.log(`[bilibili] SESSDATA 登录态: ${isLogin ? "有效 ✓" : "无效 ✗ — B站未识别此 SESSDATA"}`);
+      } else {
+        console.log("[bilibili] 未配置 BILIBILI_SESSDATA（匿名访问）");
+      }
+
+      const wbiImg = data.data?.wbi_img;
+      if (!wbiImg) {
+        throw new Error(`WBI keys 获取失败，wbi_img 为空。message=${message || "unknown"}`);
+      }
+      const imgUrl = wbiImg.img_url || wbiImg.url;
+      const subUrl = wbiImg.sub_url;
+      if (!imgUrl || !subUrl) {
+        throw new Error(`WBI keys 获取失败，wbi_img 字段不完整: ${JSON.stringify(wbiImg)}`);
+      }
+
+      const imgKey = imgUrl.split("/").pop()!.split(".")[0];
+      const subKey = subUrl.split("/").pop()!.split(".")[0];
+      cachedWbiKeys = {
+        imgKey,
+        subKey,
+        isLogin,
+        cookieFingerprint,
+        expiresAt: now + WBI_KEY_CACHE_TTL_MS,
+      };
+      cachedWbiFailure = null;
+
+      return { imgKey, subKey, isLogin };
+    } catch (err) {
+      lastError = err;
+      if (attempt < 1 && isRetryableWbiError(err)) {
+        await sleep((attempt + 1) * 450);
+        continue;
+      }
+      break;
+    }
+  }
+
+  const reason = getErrorMessage(lastError) || "unknown";
+  cachedWbiFailure = {
+    reason,
+    until: Date.now() + WBI_KEY_FAILURE_COOLDOWN_MS,
+    cookieFingerprint,
+  };
+  throw new Error(`WBI keys 获取失败: ${reason}`);
+}
 
 async function ensureBuvid3() {
   if (globalBuvid3) return;
@@ -967,10 +1062,10 @@ export async function getUPownerVideos(
     return dynamicResult;
   };
 
-  const { imgKey, subKey } = await getWbiKeys();
+  const { imgKey, subKey, isLogin } = await getWbiKeys();
 
   // 登录态诊断
-  if (cachedLoginStatus === false) {
+  if (!isLogin) {
     if (homeResult && (homeResult.total > 0 || homeResult.videos.length > 0)) {
       cacheIfNonEmpty(homeResult);
       return homeResult;
@@ -988,7 +1083,7 @@ export async function getUPownerVideos(
       return dynamicFallback;
     }
 
-    const sessdata = process.env.BILIBILI_SESSDATA;
+    const sessdata = getActiveCookieSet().sessdata;
     if (sessdata) {
       throw new Error(
         "SESSDATA 已失效（B站确认未登录）。请在浏览器重新登录 B站并复制新的 SESSDATA。\n" +

@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
-  Card, Input, Button, Typography, Space, Row, Col, Checkbox, Spin, Progress, Empty, message, Avatar, Tag, Divider, Collapse,
+  Card, Input, Button, Typography, Space, Row, Col, Checkbox, Spin, Progress, Empty, message, Avatar, Tag, Divider, Collapse, Alert,
 } from "antd";
-import { SearchOutlined, UserOutlined, PlayCircleOutlined, ThunderboltOutlined, LoadingOutlined, SettingOutlined, WarningOutlined } from "@ant-design/icons";
+import { SearchOutlined, UserOutlined, PlayCircleOutlined, ThunderboltOutlined, LoadingOutlined, SettingOutlined, WarningOutlined, QrcodeOutlined } from "@ant-design/icons";
 import Link from "next/link";
-
-const { Panel } = Collapse;
+import QrCodeLogin from "@/components/QrCodeLogin";
 
 // localStorage keys
 const LS_SESSDATA = "bilibili_sessdata";
@@ -41,6 +40,16 @@ type AnalyzeProgressState = {
   succeeded: number;
 };
 
+type BiliAuthStatus = "idle" | "checking" | "valid" | "invalid" | "unknown";
+
+type BiliAuthState = {
+  status: BiliAuthStatus;
+  reason: string;
+  username: string;
+  checkedAt: string;
+  source: "client" | "server" | "";
+};
+
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -68,6 +77,15 @@ export default function UpownerPage() {
   const [dedeUserId, setDedeUserId] = useState("");
   const [biliJct, setBiliJct] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showQrLogin, setShowQrLogin] = useState(false);
+  const [authState, setAuthState] = useState<BiliAuthState>({
+    status: "idle",
+    reason: "",
+    username: "",
+    checkedAt: "",
+    source: "",
+  });
+  const lastNotifyStatusRef = useRef<BiliAuthStatus>("idle");
 
   // 从 localStorage 恢复配置
   useEffect(() => {
@@ -84,6 +102,7 @@ export default function UpownerPage() {
     if (biliJct) localStorage.setItem(LS_BILI_JCT, biliJct);
     else localStorage.removeItem(LS_BILI_JCT);
     messageApi.success("Cookie 配置已保存");
+    void checkBiliStatus(false);
   };
 
   const clearSettings = () => {
@@ -94,16 +113,68 @@ export default function UpownerPage() {
     setDedeUserId("");
     setBiliJct("");
     messageApi.info("本地 Cookie 已清空");
+    void checkBiliStatus(false);
   };
 
   /** 构建带 B站 Cookie 的请求头 */
-  const bilibiliHeaders = (): Record<string, string> => {
+  const bilibiliHeaders = useCallback((): Record<string, string> => {
     const h: Record<string, string> = {};
     if (sessdata) h["x-bilibili-sessdata"] = sessdata;
     if (dedeUserId) h["x-bilibili-dede-userid"] = dedeUserId;
     if (biliJct) h["x-bilibili-bili-jct"] = biliJct;
     return h;
-  };
+  }, [sessdata, dedeUserId, biliJct]);
+
+  const checkBiliStatus = useCallback(async (silent = true) => {
+    if (!silent) {
+      setAuthState((prev) => ({ ...prev, status: "checking" }));
+    }
+    try {
+      const res = await fetch("/api/auth/bilibili/status", {
+        headers: bilibiliHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      const nextStatus = (data.status as BiliAuthStatus) || (data.valid ? "valid" : "unknown");
+
+      setAuthState({
+        status: nextStatus,
+        reason: typeof data.reason === "string" ? data.reason : "",
+        username: typeof data.username === "string" ? data.username : "",
+        checkedAt: typeof data.checkedAt === "string" ? data.checkedAt : new Date().toISOString(),
+        source: data.source === "client" || data.source === "server" ? data.source : "",
+      });
+
+      if (silent) {
+        const last = lastNotifyStatusRef.current;
+        if (nextStatus === "invalid" && last !== "invalid") {
+          messageApi.warning("B站登录态已失效，请更新 Cookie 或重新扫码登录");
+          setSettingsOpen(true);
+        }
+        if (nextStatus === "unknown" && last !== "unknown") {
+          messageApi.info("B站登录态暂时不可判定（可能风控/网络波动），稍后会自动重试");
+        }
+      }
+      lastNotifyStatusRef.current = nextStatus;
+    } catch {
+      setAuthState((prev) => ({
+        ...prev,
+        status: "unknown",
+        reason: "状态检查失败（网络异常）",
+        checkedAt: new Date().toISOString(),
+      }));
+      if (!silent) {
+        messageApi.error("检查 B站登录状态失败，请稍后重试");
+      }
+    }
+  }, [bilibiliHeaders, messageApi]);
+
+  useEffect(() => {
+    void checkBiliStatus(true);
+    const timer = setInterval(() => {
+      void checkBiliStatus(true);
+    }, 90_000);
+    return () => clearInterval(timer);
+  }, [checkBiliStatus]);
 
   const handleSearch = async () => {
     if (!midInput.trim()) return;
@@ -269,6 +340,42 @@ export default function UpownerPage() {
         输入UP主的主页链接或 mid，查看其所有视频并批量分析
       </Paragraph>
 
+      {authState.status !== "idle" && (
+        <Alert
+          showIcon
+          style={{ marginBottom: 14 }}
+          type={
+            authState.status === "valid"
+              ? "success"
+              : authState.status === "invalid"
+                ? "error"
+                : "warning"
+          }
+          message={
+            authState.status === "valid"
+              ? `B站登录态正常${authState.username ? `（${authState.username}）` : ""}`
+              : authState.status === "checking"
+                ? "正在检查 B站登录态..."
+                : authState.status === "invalid"
+                  ? "B站登录态已失效，请更新 Cookie"
+                  : "B站登录态暂时不可判定"
+          }
+          description={
+            <Space size={8} wrap>
+              {authState.reason ? <Text>{authState.reason}</Text> : null}
+              {authState.source ? <Tag color="blue">{authState.source === "client" ? "来源: 本地Cookie" : "来源: 服务端Cookie"}</Tag> : null}
+              {authState.checkedAt ? <Text type="secondary">检查时间: {new Date(authState.checkedAt).toLocaleTimeString("zh-CN")}</Text> : null}
+              <Button size="small" onClick={() => void checkBiliStatus(false)}>
+                刷新状态
+              </Button>
+              <Button size="small" type="link" onClick={() => setSettingsOpen(true)}>
+                打开 Cookie 配置
+              </Button>
+            </Space>
+          }
+        />
+      )}
+
       {/* B站 Cookie 配置 */}
       <Collapse
         ghost
@@ -310,10 +417,42 @@ export default function UpownerPage() {
                 <Space>
                   <Button size="small" type="primary" onClick={saveSettings}>保存</Button>
                   <Button size="small" onClick={clearSettings}>清空</Button>
-                  <Text type="secondary" style={{ fontSize: 11 }}>
-                    获取方法：浏览器登录 B站 → F12 → Application → Cookies → 分别复制三个值
-                  </Text>
+                  <Button size="small" icon={<WarningOutlined />} onClick={() => void checkBiliStatus(false)}>检查状态</Button>
                 </Space>
+                <Divider style={{ margin: "4px 0" }}>
+                  <Text type="secondary" style={{ fontSize: 11 }}>或</Text>
+                </Divider>
+                {!showQrLogin ? (
+                  <Button
+                    size="small"
+                    icon={<QrcodeOutlined />}
+                    onClick={() => setShowQrLogin(true)}
+                  >
+                    扫码登录
+                  </Button>
+                ) : (
+                  <QrCodeLogin
+                    onSuccess={(cookies) => {
+                      setSessdata(cookies.sessdata);
+                      setDedeUserId(cookies.dedeUserId);
+                      setBiliJct(cookies.biliJct);
+                      // 保存到 localStorage
+                      if (cookies.sessdata) localStorage.setItem(LS_SESSDATA, cookies.sessdata);
+                      else localStorage.removeItem(LS_SESSDATA);
+                      if (cookies.dedeUserId) localStorage.setItem(LS_DEDE_USERID, cookies.dedeUserId);
+                      else localStorage.removeItem(LS_DEDE_USERID);
+                      if (cookies.biliJct) localStorage.setItem(LS_BILI_JCT, cookies.biliJct);
+                      else localStorage.removeItem(LS_BILI_JCT);
+                      setShowQrLogin(false);
+                      messageApi.success("扫码登录成功，Cookie 已保存");
+                      void checkBiliStatus(false);
+                    }}
+                    onCancel={() => setShowQrLogin(false)}
+                  />
+                )}
+                <Text type="secondary" style={{ fontSize: 11 }}>
+                  手动获取：浏览器登录 B站 → F12 → Application → Cookies → 分别复制三个值
+                </Text>
               </Space>
             </div>
           ),

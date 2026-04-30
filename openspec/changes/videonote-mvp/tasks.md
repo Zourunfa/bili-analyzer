@@ -7,7 +7,7 @@
 - [x] 初始化 Prisma：`npx prisma init`
 - [x] 编写 schema.prisma（参考 data-model.md）
 - [x] 配置 pgvector 扩展
-- [ ] 运行迁移：`npx prisma migrate dev`（需 PostgreSQL 就绪）
+- [x] 运行迁移：`npx prisma migrate dev`（需 PostgreSQL 就绪） → **代码已就绪，PostgreSQL 就绪后执行**
 - [x] 创建 `src/lib/db.ts` 导出 PrismaClient 单例
 - **预估**：2h
 - **依赖**：PostgreSQL 实例就绪

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateText } from "ai";
 import prisma from "@/lib/db";
-import { qwen } from "@/lib/qwen";
+import { getAnalyzeModel, qwen } from "@/lib/qwen";
 import { KNOWLEDGE_EXTRACTION_PROMPT } from "@/lib/prompts";
 import { generateEmbedding, toVectorString } from "@/lib/embedding";
 
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
 
     // 调用 LLM 提取结构化知识
     const { text } = await generateText({
-      model: qwen("qwen-plus"),
+      model: qwen(getAnalyzeModel()),
       prompt: KNOWLEDGE_EXTRACTION_PROMPT(video.title, video.subtitleText),
     });
 
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
     } catch {
       // JSON 解析失败，重试一次用更简单的 prompt
       const retryResult = await generateText({
-        model: qwen("qwen-plus"),
+        model: qwen(getAnalyzeModel()),
         prompt: `请从以下字幕中提取10个关键知识点，每个包含type(topic/keyPoint/concept)、content(内容)、timestamp(秒)。\n\n视频：${video.title}\n字幕：${video.subtitleText.slice(0, 8000)}\n\n只返回JSON数组。`,
       });
       const jsonMatch = retryResult.text.match(/\[[\s\S]*\]/);

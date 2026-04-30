@@ -37,6 +37,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# persisted bilibili cookies (from QR login)
+/data/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

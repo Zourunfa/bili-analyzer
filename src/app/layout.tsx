@@ -6,7 +6,7 @@ import { ConfigProvider, theme } from "antd";
 
 export const metadata: Metadata = {
   title: "视记 VideoNote - 视频学习知识管理平台",
-  description: "将B站视频转化为可检索、可对话、可导出的结构化知识",
+  description: "将视频内容转化为可检索、可对话、可导出的结构化知识，支持B站/抖音/小红书",
 };
 
 export default function RootLayout({

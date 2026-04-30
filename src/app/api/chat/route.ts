@@ -1,5 +1,5 @@
 import { streamText } from "ai";
-import { qwen } from "@/lib/qwen";
+import { getAnalyzeModel, qwen } from "@/lib/qwen";
 import { CHAT_SYSTEM_PROMPT } from "@/lib/prompts";
 
 export async function POST(req: Request) {
@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     }
 
     const result = streamText({
-      model: qwen("qwen-plus"),
+      model: qwen(getAnalyzeModel()),
       system: CHAT_SYSTEM_PROMPT(subtitleText),
       messages,
     });

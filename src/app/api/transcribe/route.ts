@@ -1,16 +1,22 @@
 import { NextRequest } from "next/server";
 import { downloadAudioViaApi, subtitleToText } from "@/lib/bilibili";
-import { transcribeAudio, parseSrt, cleanup } from "@/lib/videocaptioner";
+import { transcribeAudio, parseSrt, cleanup, downloadAudioFromUrl } from "@/lib/videocaptioner";
 import { acquireTranscribeSlot, getTranscribeLoad } from "@/lib/transcribe-guard";
 
 export async function POST(req: NextRequest) {
-  const { bvid, cid } = await req.json();
+  const body = await req.json();
+  const { bvid, cid, videoUrl, platform } = body;
 
-  if (!bvid || !cid) {
-    return new Response(JSON.stringify({ error: "缺少 bvid 或 cid" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+  // B站模式：必须有 bvid 和 cid
+  const isBilibili = !!bvid && !!cid;
+  // 多平台模式：必须有 videoUrl
+  const isMultiPlatform = !!videoUrl;
+
+  if (!isBilibili && !isMultiPlatform) {
+    return new Response(
+      JSON.stringify({ error: "缺少参数：请提供 bvid+cid（B站）或 videoUrl+platform（抖音/小红书）" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
+    );
   }
 
   const encoder = new TextEncoder();
@@ -39,17 +45,31 @@ export async function POST(req: NextRequest) {
           });
         });
 
-        // Step 1: 下载音频（带进度）
-        send({ type: "status", message: "正在下载音频..." });
+        // Step 1: 下载音频
+        const platformLabel = isBilibili ? "B站" : (platform === "douyin" ? "抖音" : "小红书");
+        send({ type: "status", message: `正在从 ${platformLabel} 下载音频...` });
 
-        audioPath = await downloadAudioViaApi(bvid, cid, (percent, downloaded, total) => {
-          send({ type: "progress", percent, downloaded, total });
-        });
+        if (isBilibili) {
+          audioPath = await downloadAudioViaApi(bvid, Number(cid), (percent, downloaded, total) => {
+            send({ type: "progress", percent, downloaded, total });
+          });
+        } else {
+          // 多平台音频下载
+          if (platform === "douyin" && videoUrl) {
+            // 抖音：videoUrl 是 douyinvod.com CDN 直链，用 fetch 直接下载再 ffmpeg 提音频
+            const { downloadDouyinAudio } = await import("@/lib/douyin");
+            audioPath = await downloadDouyinAudio(videoUrl);
+          } else {
+            // 其他平台：用 yt-dlp
+            audioPath = await downloadAudioFromUrl(videoUrl);
+          }
+          send({ type: "progress", percent: 100, downloaded: "?", total: "?" });
+        }
 
         workDir = audioPath.substring(0, audioPath.lastIndexOf("/"));
 
         // Step 2: 语音转写
-        send({ type: "status", message: "正在语音转写..." });
+        send({ type: "status", message: "正在语音转写，请稍候..." });
         heartbeatTimer = setInterval(() => {
           send({ type: "status", message: "正在语音转写，请稍候..." });
         }, 15_000);

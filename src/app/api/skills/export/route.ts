@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateText } from "ai";
 import prisma from "@/lib/db";
-import { qwen } from "@/lib/qwen";
+import { getAnalyzeModel, qwen } from "@/lib/qwen";
 import { SKILL_EXPORT_PROMPT } from "@/lib/prompts";
 
 export async function POST(req: Request) {
@@ -96,7 +96,7 @@ async function exportSkillFolder(
     .join("\n");
 
   const { text: instructions } = await generateText({
-    model: qwen("qwen-plus"),
+    model: qwen(getAnalyzeModel()),
     prompt: SKILL_EXPORT_PROMPT(notebook.title, pointsText),
   });
 
@@ -224,7 +224,7 @@ async function exportSystemPrompt(
     .join("\n");
 
   const { text } = await generateText({
-    model: qwen("qwen-plus"),
+    model: qwen(getAnalyzeModel()),
     prompt: SKILL_EXPORT_PROMPT(notebook.title, pointsText),
   });
 

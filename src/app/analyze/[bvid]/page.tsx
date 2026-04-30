@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Layout, Card, Tabs, Input, Button, Spin, Empty, Typography, Space, Tag, Divider, Progress, Modal, Select, message } from "antd";
@@ -22,21 +22,32 @@ import {
   CheckCircleOutlined,
   DownloadOutlined,
   FolderOpenOutlined,
+  TagsOutlined,
+  FileMarkdownOutlined,
+  CopyOutlined,
+  ApartmentOutlined,
 } from "@ant-design/icons";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import { marked } from "marked";
 import JSZip from "jszip";
+import MindMapView from "@/components/MindMapView";
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
 interface VideoInfo {
+  // 多平台通用
   title: string;
-  pic: string;
-  owner: { name: string };
-  duration: number;
-  desc: string;
+  /** 抖音/小红书封面 */
+  coverUrl?: string;
+  /** 抖音/小红书作者名 */
+  authorName?: string;
+  duration?: number;
+  // B站专用
+  pic?: string;
+  owner?: { name: string };
+  desc?: string;
 }
 
 interface Message {
@@ -56,10 +67,142 @@ interface HistoryVideo {
   createdAt: string;
 }
 
+interface VideoTagItem {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
+interface TemplateItem {
+  id: string;
+  name: string;
+  description: string;
+}
+
+interface TimestampNoteItem {
+  id: string;
+  timestampSec: number;
+  content: string;
+}
+
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function parseMmSsToSeconds(input: string): number | null {
+  const match = input.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const m = Number(match[1]);
+  const s = Number(match[2]);
+  if (!Number.isFinite(m) || !Number.isFinite(s) || s > 59) return null;
+  return m * 60 + s;
+}
+
+function formatSecondsToMmSs(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function parseTimestampFromSubtitleLine(line: string): number | null {
+  const match = line.match(/^\[(\d{2}):(\d{2})\]/);
+  if (!match) return null;
+  const m = Number(match[1]);
+  const s = Number(match[2]);
+  if (!Number.isFinite(m) || !Number.isFinite(s)) return null;
+  return m * 60 + s;
+}
+
+function sanitizeMindmapText(input: string): string {
+  return input
+    .replace(/[`*#>\[\]\(\){}]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 36);
+}
+
+function buildMindmapMermaid(summaryText: string): string {
+  const rawLines = summaryText
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!rawLines.length) {
+    return "mindmap\n  root((视频摘要))\n    暂无内容";
+  }
+
+  const firstMeaningful =
+    rawLines.find((line) => !/^[-*]\s*$/.test(line)) || rawLines[0];
+  const root = sanitizeMindmapText(
+    firstMeaningful.replace(/^#{1,6}\s+/, "") || "视频摘要"
+  );
+
+  const sections: Array<{ title: string; items: string[] }> = [];
+  let currentSection: { title: string; items: string[] } | null = null;
+
+  const pushSection = () => {
+    if (!currentSection) return;
+    currentSection.items = currentSection.items.slice(0, 4);
+    if (!currentSection.items.length) return;
+    sections.push(currentSection);
+  };
+
+  for (const raw of rawLines) {
+    const line = sanitizeMindmapText(
+      raw
+        .replace(/^\[(\d{2}):(\d{2})\]\s*/, "")
+        .replace(/^#{1,6}\s+/, "")
+        .replace(/^[-*]\s+/, "")
+        .replace(/^\d+\.\s+/, "")
+    );
+    if (!line) continue;
+
+    const isHeading =
+      /^#{2,6}\s+/.test(raw) ||
+      (/^[-*]\s+/.test(raw) && line.length <= 20) ||
+      (/^\d+\.\s+/.test(raw) && line.length <= 20);
+
+    if (isHeading) {
+      pushSection();
+      currentSection = { title: line, items: [] };
+      continue;
+    }
+
+    if (!currentSection) {
+      currentSection = { title: "核心要点", items: [] };
+    }
+
+    if (!currentSection.items.includes(line)) {
+      currentSection.items.push(line);
+    }
+  }
+  pushSection();
+
+  if (!sections.length) {
+    const fallbackItems = rawLines
+      .map((line) => sanitizeMindmapText(line))
+      .filter(Boolean)
+      .slice(0, 6);
+    return [
+      "mindmap",
+      `  root((${root}))`,
+      "    核心要点",
+      ...fallbackItems.map((item) => `      ${item}`),
+    ].join("\n");
+  }
+
+  const limitedSections = sections.slice(0, 6);
+  const lines = ["mindmap", `  root((${root}))`];
+  for (const section of limitedSections) {
+    lines.push(`    ${section.title}`);
+    for (const point of section.items) {
+      lines.push(`      ${point}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 export default function AnalyzePage() {
@@ -70,6 +213,8 @@ export default function AnalyzePage() {
   const bvid = params.bvid as string;
   const cid = searchParams.get("cid");
   const isHistoryMode = bvid === "history";
+  const platform = (searchParams.get("platform") || "bilibili") as "bilibili" | "douyin" | "xiaohongshu";
+  const isMultiPlatform = platform !== "bilibili";
 
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [subtitleText, setSubtitleText] = useState("");
@@ -79,7 +224,7 @@ export default function AnalyzePage() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<"summary" | "chat">("summary");
+  const [activeTab, setActiveTab] = useState<"summary" | "mindmap" | "chat">("summary");
   const [transcribing, setTranscribing] = useState(false);
   const [transcribeStep, setTranscribeStep] = useState<string>("");
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -98,6 +243,25 @@ export default function AnalyzePage() {
   const [isMobile, setIsMobile] = useState(false);
   const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const [mobileVideoMetaOpen, setMobileVideoMetaOpen] = useState(false);
+  const [tagModalOpen, setTagModalOpen] = useState(false);
+  const [allTags, setAllTags] = useState<VideoTagItem[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [newTagName, setNewTagName] = useState("");
+  const [tagSubmitting, setTagSubmitting] = useState(false);
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [templateId, setTemplateId] = useState<string | null>(null);
+  const [templateExtraPrompt, setTemplateExtraPrompt] = useState("");
+  const [templateOutput, setTemplateOutput] = useState("");
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const [timestampNotes, setTimestampNotes] = useState<TimestampNoteItem[]>([]);
+  const [noteTimestampInput, setNoteTimestampInput] = useState("");
+  const [noteContentInput, setNoteContentInput] = useState("");
+  const [noteLoading, setNoteLoading] = useState(false);
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [mindmapCopied, setMindmapCopied] = useState(false);
+  const [summaryCopied, setSummaryCopied] = useState(false);
+  const [subtitleCopied, setSubtitleCopied] = useState(false);
 
   // 顶部链接输入框
   const [headerUrl, setHeaderUrl] = useState("");
@@ -115,9 +279,14 @@ export default function AnalyzePage() {
       const data = await res.json();
       if (!res.ok) {
         message.error(data.error || "获取视频信息失败");
+        setHeaderLoading(false);
         return;
       }
-      router.push(`/analyze/${data.bvid}?cid=${data.cid}`);
+      const analyzeId = data.platform === "bilibili" ? data.id : data.id;
+      const params = new URLSearchParams();
+      params.set("platform", data.platform);
+      if (data.platform === "bilibili" && data.cid) params.set("cid", String(data.cid));
+      router.push(`/analyze/${analyzeId}?${params.toString()}`);
     } catch {
       message.error("网络错误，请重试");
     } finally {
@@ -126,7 +295,7 @@ export default function AnalyzePage() {
   };
 
   // 侧边栏历史视频
-  const [sidebarTab, setSidebarTab] = useState<"subtitle" | "history">(isHistoryMode ? "history" : "subtitle");
+  const [sidebarTab, setSidebarTab] = useState<"subtitle" | "history">(isHistoryMode || isMultiPlatform ? "history" : "subtitle");
   const [historyVideos, setHistoryVideos] = useState<HistoryVideo[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyKeyword, setHistoryKeyword] = useState("");
@@ -243,7 +412,7 @@ export default function AnalyzePage() {
           pic: info.pic,
           desc: info.desc,
           duration: info.duration,
-          ownerName: info.owner.name,
+          ownerName: info.owner?.name || info.authorName || "",
           ownerMid: "",
           cid: Number(cid),
           subtitleText: text,
@@ -350,20 +519,24 @@ export default function AnalyzePage() {
 
       // 数据库无数据，走在线获取流程
       // 1. 获取视频信息
+      type VideoApiData = { error?: string; videoUrl?: string; description?: string; title: string; duration?: number; [key: string]: unknown };
+      let infoData: VideoApiData = { title: "" };
       try {
         const infoRes = await fetch("/api/video-info", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url: bvid }),
         });
-        const infoData = await infoRes.json();
-        if (infoData.error) {
-          setError(infoData.error);
+        const rawData = await infoRes.json() as VideoApiData;
+        infoData = rawData;
+        if (rawData.error) {
+          setError(rawData.error);
           return;
         }
         if (!cancelled) {
-          setVideoInfo(infoData);
-          videoInfoRef.current = infoData;
+          const vid: VideoInfo | null = rawData as unknown as VideoInfo;
+          setVideoInfo(vid);
+          videoInfoRef.current = vid;
         }
       } catch {
         setError("获取视频信息失败");
@@ -372,88 +545,163 @@ export default function AnalyzePage() {
 
       if (cancelled) return;
 
-      // 2. 如果有 cid，获取字幕并生成摘要
-      if (!cid) return;
+      // 2. 获取视频内容（B站：字幕 API；多平台：音频转写）
+      const videoUrl = infoData.videoUrl;
 
-      try {
-        const subRes = await fetch("/api/subtitle", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bvid, cid: Number(cid) }),
-        });
-        const subData = await subRes.json();
-        if (subData.error) {
-          setError(subData.error);
-          return;
-        }
+      if (platform === "bilibili") {
+        if (!cid) return;
 
-        // 有 CC 字幕，直接走摘要
-        if (subData.subtitleSource === "cc") {
-          setSubtitleText(subData.text);
-          const summaryText = await generateSummary(subData.text);
-          autoSaveVideo(videoInfoRef.current!, subData.text, "cc", summaryText);
-          return;
-        }
-
-        // 无 CC 字幕，走语音转写（SSE 流式获取进度）
-        if (subData.subtitleSource === "none") {
-          setTranscribing(true);
-          setTranscribeStep("正在下载音频...");
-          setDownloadProgress(0);
-          setDownloadSize("");
-          setSummaryLoading(true);
-
-          const transRes = await fetch("/api/transcribe", {
+        try {
+          const subRes = await fetch("/api/subtitle", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ bvid, cid: Number(cid) }),
           });
+          const subData = await subRes.json();
+          if (subData.error) {
+            setError(subData.error);
+            return;
+          }
 
-          const reader = transRes.body?.getReader();
-          const decoder = new TextDecoder();
-          let sseBuffer = "";
+          if (subData.subtitleSource === "cc") {
+            setSubtitleText(subData.text);
+            const summaryText = await generateSummary(subData.text);
+            autoSaveVideo(videoInfoRef.current!, subData.text, "cc", summaryText);
+            return;
+          }
 
-          if (reader) {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              sseBuffer += decoder.decode(value, { stream: true });
+          if (subData.subtitleSource === "transcribed") {
+            setSubtitleText(subData.text);
+            const summaryText = await generateSummary(subData.text);
+            autoSaveVideo(videoInfoRef.current!, subData.text, "transcribed", summaryText);
+            return;
+          }
 
-              const lines = sseBuffer.split("\n");
-              sseBuffer = lines.pop() || "";
+          if (subData.subtitleSource === "none") {
+            setTranscribing(true);
+            setTranscribeStep("正在下载音频...");
+            setDownloadProgress(0);
+            setDownloadSize("");
+            setSummaryLoading(true);
 
-              for (const line of lines) {
-                if (!line.startsWith("data: ")) continue;
-                try {
-                  const event = JSON.parse(line.slice(6));
-                  if (event.type === "progress") {
-                    setDownloadProgress(event.percent);
-                    setDownloadSize(`${event.downloaded} / ${event.total} MB`);
-                    setTranscribeStep(`正在下载音频 ${event.percent}%`);
-                  } else if (event.type === "status") {
-                    setTranscribeStep(event.message);
-                  } else if (event.type === "error") {
-                    setError("语音转写失败：" + event.error);
-                    setTranscribing(false);
-                    setSummaryLoading(false);
-                    return;
-                  } else if (event.type === "done") {
-                    const transData = event.data;
-                    setTranscribeStep("转写完成，正在生成摘要...");
-                    setSubtitleText(transData.text);
-                    setTranscribing(false);
-                    const summaryText = await generateSummary(transData.text);
-                    autoSaveVideo(videoInfoRef.current!, transData.text, "transcribe", summaryText);
-                  }
-                } catch { /* skip invalid JSON */ }
+            const transRes = await fetch("/api/transcribe", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ bvid, cid: Number(cid) }),
+            });
+
+            const reader = transRes.body?.getReader();
+            const decoder = new TextDecoder();
+            let sseBuffer = "";
+
+            if (reader) {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                sseBuffer += decoder.decode(value, { stream: true });
+
+                const lines = sseBuffer.split("\n");
+                sseBuffer = lines.pop() || "";
+
+                for (const line of lines) {
+                  if (!line.startsWith("data: ")) continue;
+                  try {
+                    const event = JSON.parse(line.slice(6));
+                    if (event.type === "progress") {
+                      setDownloadProgress(event.percent);
+                      setDownloadSize(`${event.downloaded} / ${event.total} MB`);
+                      setTranscribeStep(`正在下载音频 ${event.percent}%`);
+                    } else if (event.type === "status") {
+                      setTranscribeStep(event.message);
+                    } else if (event.type === "error") {
+                      setError("语音转写失败：" + event.error);
+                      setTranscribing(false);
+                      setSummaryLoading(false);
+                      return;
+                    } else if (event.type === "done") {
+                      const transData = event.data;
+                      setTranscribeStep("转写完成，正在生成摘要...");
+                      setSubtitleText(transData.text);
+                      setTranscribing(false);
+                      const summaryText = await generateSummary(transData.text);
+                      autoSaveVideo(videoInfoRef.current!, transData.text, "transcribe", summaryText);
+                    }
+                  } catch { /* skip invalid JSON */ }
+                }
               }
             }
           }
+        } catch {
+          setError("处理失败，请重试");
+          setSummaryLoading(false);
+          setTranscribing(false);
         }
-      } catch {
-        setError("处理失败，请重试");
-        setSummaryLoading(false);
-        setTranscribing(false);
+      } else if (videoUrl) {
+        // 抖音/小红书：使用 videoUrl 转写音频
+        setTranscribing(true);
+        setTranscribeStep("正在从视频下载音频...");
+        setDownloadProgress(0);
+        setDownloadSize("");
+        setSummaryLoading(true);
+
+        const transRes = await fetch("/api/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ videoUrl, platform }),
+        });
+
+        const reader = transRes.body?.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = "";
+
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            sseBuffer += decoder.decode(value, { stream: true });
+
+            const lines = sseBuffer.split("\n");
+            sseBuffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              try {
+                const event = JSON.parse(line.slice(6));
+                if (event.type === "progress") {
+                  setDownloadProgress(event.percent);
+                  setDownloadSize(`${event.downloaded} / ${event.total}`);
+                  setTranscribeStep(event.percent === 100 ? "正在语音转写..." : `正在下载音频 ${event.percent}%`);
+                } else if (event.type === "status") {
+                  setTranscribeStep(event.message);
+                } else if (event.type === "error") {
+                  setError("语音转写失败：" + event.error);
+                  setTranscribing(false);
+                  setSummaryLoading(false);
+                  return;
+                } else if (event.type === "done") {
+                  const transData = event.data;
+                  setTranscribeStep("转写完成，正在生成摘要...");
+                  setSubtitleText(transData.text);
+                  setTranscribing(false);
+                  const summaryText = await generateSummary(transData.text);
+                  autoSaveVideo(videoInfoRef.current!, transData.text, "transcribe", summaryText);
+                }
+              } catch { /* skip invalid JSON */ }
+            }
+          }
+        }
+      } else {
+        // 无视频直链，退回到 description 生成摘要
+        setSummaryLoading(true);
+        setTranscribeStep("正在基于视频描述生成摘要...");
+        try {
+          const summaryText = await generateSummary(infoData.description || infoData.title);
+          setSummary(summaryText);
+        } catch {
+          setError("生成摘要失败");
+        } finally {
+          setSummaryLoading(false);
+        }
       }
     })();
 
@@ -618,7 +866,7 @@ export default function AnalyzePage() {
           pic: videoInfo.pic,
           desc: videoInfo.desc,
           duration: videoInfo.duration,
-          ownerName: videoInfo.owner.name,
+          ownerName: videoInfo.owner?.name || videoInfo.authorName || "",
           ownerMid: "",
           cid: Number(cid),
           subtitleText,
@@ -734,15 +982,298 @@ export default function AnalyzePage() {
 
   const closeDrawer = () => setDrawerOpen(false);
 
+  const handleOpenTagModal = async () => {
+    if (authStatus !== "authenticated") {
+      message.warning("请先登录");
+      router.push("/login");
+      return;
+    }
+    if (!bvid || isHistoryMode) {
+      message.warning("请先进入具体视频页再编辑标签");
+      return;
+    }
+    try {
+      const [tagRes, relationRes] = await Promise.all([
+        fetch("/api/tags"),
+        fetch(`/api/videos/${bvid}/tags`),
+      ]);
+      const tagData = await tagRes.json();
+      const relationData = await relationRes.json();
+      if (!tagRes.ok) {
+        message.error(tagData.error || "获取标签失败");
+        return;
+      }
+      setAllTags(tagData.tags || []);
+      setSelectedTagIds((relationData.tags || []).map((tag: VideoTagItem) => tag.id));
+      setTagModalOpen(true);
+    } catch {
+      message.error("获取标签失败");
+    }
+  };
+
+  const handleCreateTag = async () => {
+    const name = newTagName.trim();
+    if (!name) return;
+    try {
+      const res = await fetch("/api/tags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        message.error(data.error || "创建标签失败");
+        return;
+      }
+      setAllTags((prev) => [data.tag, ...prev]);
+      setSelectedTagIds((prev) => Array.from(new Set([data.tag.id, ...prev])));
+      setNewTagName("");
+    } catch {
+      message.error("创建标签失败");
+    }
+  };
+
+  const handleSaveVideoTags = async () => {
+    if (!bvid || isHistoryMode) return;
+    setTagSubmitting(true);
+    try {
+      const relationRes = await fetch(`/api/videos/${bvid}/tags`);
+      const relationData = await relationRes.json();
+      const currentIds = new Set<string>((relationData.tags || []).map((tag: VideoTagItem) => tag.id));
+      const selected = new Set<string>(selectedTagIds);
+
+      const toAdd = Array.from(selected).filter((id) => !currentIds.has(id));
+      const toRemove = Array.from(currentIds).filter((id) => !selected.has(id));
+
+      await Promise.all([
+        ...toAdd.map((tagId) =>
+          fetch(`/api/videos/${bvid}/tags`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tagId }),
+          })
+        ),
+        ...toRemove.map((tagId) =>
+          fetch(`/api/videos/${bvid}/tags`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tagId }),
+          })
+        ),
+      ]);
+
+      message.success("标签已更新");
+      setTagModalOpen(false);
+    } catch {
+      message.error("保存标签失败");
+    } finally {
+      setTagSubmitting(false);
+    }
+  };
+
+  const handleOpenTemplateModal = async () => {
+    if (authStatus !== "authenticated") {
+      message.warning("请先登录");
+      router.push("/login");
+      return;
+    }
+    try {
+      const res = await fetch("/api/templates");
+      const data = await res.json();
+      if (!res.ok) {
+        message.error(data.error || "获取模板失败");
+        return;
+      }
+      setTemplates(data.templates || []);
+      setTemplateId((data.templates || [])[0]?.id || null);
+      setTemplateOutput("");
+      setTemplateExtraPrompt("");
+      setTemplateModalOpen(true);
+    } catch {
+      message.error("获取模板失败");
+    }
+  };
+
+  const handleGenerateTemplate = async () => {
+    if (!templateId) {
+      message.warning("请选择模板");
+      return;
+    }
+    if (!summary || !subtitleText) {
+      message.warning("请先完成字幕和摘要分析");
+      return;
+    }
+
+    setTemplateLoading(true);
+    setTemplateOutput("");
+    try {
+      const res = await fetch("/api/templates/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          templateId,
+          summary,
+          subtitleText,
+          extraPrompt: templateExtraPrompt,
+        }),
+      });
+
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        message.error(data.error || "模板生成失败");
+        setTemplateLoading(false);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = "";
+      let output = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split("\n");
+        sseBuffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = JSON.parse(line.slice(6));
+          if (payload.type === "text" && typeof payload.content === "string") {
+            output += payload.content;
+            setTemplateOutput(output);
+          }
+          if (payload.type === "error") {
+            message.error(payload.message || "模板生成失败");
+          }
+        }
+      }
+    } catch {
+      message.error("模板生成失败");
+    } finally {
+      setTemplateLoading(false);
+    }
+  };
+
+  const fetchTimestampNotes = useCallback(async () => {
+    if (!bvid || isHistoryMode) {
+      setTimestampNotes([]);
+      return;
+    }
+    setNoteLoading(true);
+    try {
+      const res = await fetch(`/api/videos/${bvid}/notes`);
+      const data = await res.json();
+      if (!res.ok) {
+        setTimestampNotes([]);
+        return;
+      }
+      setTimestampNotes(data.notes || []);
+    } catch {
+      setTimestampNotes([]);
+    } finally {
+      setNoteLoading(false);
+    }
+  }, [bvid, isHistoryMode]);
+
+  const handleCreateTimestampNote = async () => {
+    if (!bvid || isHistoryMode) return;
+    const content = noteContentInput.trim();
+    if (!content) {
+      message.warning("请输入笔记内容");
+      return;
+    }
+    const timestampSec = parseMmSsToSeconds(noteTimestampInput);
+    if (timestampSec === null) {
+      message.warning("时间戳格式应为 mm:ss，例如 02:15");
+      return;
+    }
+
+    setNoteSaving(true);
+    try {
+      const res = await fetch(`/api/videos/${bvid}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          timestampSec,
+          content,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        message.error(data.error || "保存笔记失败");
+        return;
+      }
+      setNoteContentInput("");
+      await fetchTimestampNotes();
+      message.success("已记录时间戳笔记");
+    } catch {
+      message.error("保存笔记失败");
+    } finally {
+      setNoteSaving(false);
+    }
+  };
+
+  const jumpToTimestampNote = (sec: number) => {
+    setSidebarTab("subtitle");
+    const exact = document.querySelector(`[data-ts=\"${sec}\"]`) as HTMLElement | null;
+    if (exact) {
+      exact.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    const all = Array.from(document.querySelectorAll("[data-ts]")) as HTMLElement[];
+    const candidate = all
+      .map((el) => ({ el, ts: Number(el.dataset.ts || -1) }))
+      .filter((item) => Number.isFinite(item.ts) && item.ts >= sec)
+      .sort((a, b) => a.ts - b.ts)[0];
+    if (candidate?.el) {
+      candidate.el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
+  useEffect(() => {
+    fetchTimestampNotes();
+  }, [fetchTimestampNotes]);
+
+  const mindmapMermaid = useMemo(() => buildMindmapMermaid(summary), [summary]);
+
+  const handleCopyMindmap = async () => {
+    if (!mindmapMermaid.trim()) return;
+    try {
+      await navigator.clipboard.writeText(`\`\`\`mermaid\n${mindmapMermaid}\n\`\`\``);
+      setMindmapCopied(true);
+      message.success("思维导图代码已复制");
+      window.setTimeout(() => setMindmapCopied(false), 1200);
+    } catch {
+      message.error("复制失败，请重试");
+    }
+  };
+
+  const handleCopySummary = async () => {
+    if (!summary) return;
+    await navigator.clipboard.writeText(summary);
+    setSummaryCopied(true);
+    message.success("摘要已复制");
+    window.setTimeout(() => setSummaryCopied(false), 2000);
+  };
+
+  const handleCopySubtitle = async () => {
+    if (!subtitleText) return;
+    await navigator.clipboard.writeText(subtitleText);
+    setSubtitleCopied(true);
+    message.success("字幕已复制");
+    window.setTimeout(() => setSubtitleCopied(false), 2000);
+  };
+
   const videoCardNode = videoInfo ? (
     <Card
       className="analyze-video-card"
       size="small"
       cover={
         <div className="analyze-video-cover" style={{ width: "100%", aspectRatio: "16/9", background: "var(--card)", borderRadius: 8, overflow: "hidden" }}>
-          {videoInfo.pic ? (
+          {videoInfo.pic || videoInfo.coverUrl ? (
             <img
-              src={videoInfo.pic}
+              src={videoInfo.pic || videoInfo.coverUrl}
               alt={videoInfo.title}
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
               referrerPolicy="no-referrer"
@@ -760,9 +1291,9 @@ export default function AnalyzePage() {
         {videoInfo.title}
       </Title>
       <Space size={8} wrap>
-        <Tag color="blue">{videoInfo.owner.name}</Tag>
+        <Tag color="blue">{videoInfo.owner?.name || videoInfo.authorName || ""}</Tag>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          <PlayCircleOutlined /> {formatDuration(videoInfo.duration)}
+          <PlayCircleOutlined /> {formatDuration(videoInfo.duration ?? 0)}
         </Text>
       </Space>
     </Card>
@@ -773,83 +1304,143 @@ export default function AnalyzePage() {
       activeKey={sidebarTab}
       onChange={(key) => setSidebarTab(key as "subtitle" | "history")}
       style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
-      items={[
-        {
-          key: "subtitle",
-          label: <span><FileTextOutlined /> 字幕</span>,
-          children: (
-            <div
-              style={{
-                height: "100%",
-                overflowY: "auto",
-                padding: "0 16px 16px",
-                fontSize: 12,
-                color: "var(--muted-foreground)",
-                whiteSpace: "pre-wrap",
-                lineHeight: 1.8,
-              }}
-            >
-              {subtitleText || "加载中..."}
-            </div>
-          ),
-        },
-        {
-          key: "history",
-          label: <span><HistoryOutlined /> 历史</span>,
-          children: (
-            <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-              <div style={{ padding: "8px 12px", flexShrink: 0 }}>
-                <Input
-                  size="small"
-                  placeholder="搜索标题或UP主..."
-                  prefix={<SearchOutlined />}
-                  allowClear
-                  value={historyKeyword}
-                  onChange={(e) => setHistoryKeyword(e.target.value)}
-                />
-              </div>
-              <div style={{ flex: 1, overflowY: "auto" }}>
-                {historyLoading ? (
-                  <div style={{ textAlign: "center", padding: 32 }}>
-                    <Spin size="small" />
+      items={
+        [
+          {
+            key: "subtitle",
+            label: <span><FileTextOutlined /> 字幕</span>,
+            children: (
+              <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+                <div className="subtitle-note-toolbar">
+                  <Space.Compact style={{ flex: 1 }}>
+                    <Input
+                      size="small"
+                      value={noteTimestampInput}
+                      onChange={(e) => setNoteTimestampInput(e.target.value)}
+                      placeholder="时间 00:15"
+                      style={{ maxWidth: 110 }}
+                    />
+                    <Input
+                      size="small"
+                      value={noteContentInput}
+                      onChange={(e) => setNoteContentInput(e.target.value)}
+                      placeholder="记下这个时间点的关键内容..."
+                      onPressEnter={handleCreateTimestampNote}
+                    />
+                    <Button
+                      size="small"
+                      type="primary"
+                      loading={noteSaving}
+                      onClick={handleCreateTimestampNote}
+                      disabled={isHistoryMode || !bvid}
+                    >
+                      记笔记
+                    </Button>
+                  </Space.Compact>
+                  <Button
+                    size="small"
+                    icon={<CopyOutlined />}
+                    type={subtitleCopied ? "primary" : "default"}
+                    onClick={handleCopySubtitle}
+                    disabled={!subtitleText}
+                  >
+                    {subtitleCopied ? "已复制" : "复制字幕"}
+                  </Button>
+                  <div className="timestamp-note-list">
+                    {noteLoading ? (
+                      <Text type="secondary" style={{ fontSize: 12 }}>加载笔记中...</Text>
+                    ) : timestampNotes.length === 0 ? (
+                      <Text type="secondary" style={{ fontSize: 12 }}>还没有时间戳笔记</Text>
+                    ) : (
+                      timestampNotes.map((note) => (
+                        <Tag
+                          key={note.id}
+                          className="timestamp-note-tag"
+                          onClick={() => jumpToTimestampNote(note.timestampSec)}
+                        >
+                          {formatSecondsToMmSs(note.timestampSec)} {note.content}
+                        </Tag>
+                      ))
+                    )}
                   </div>
-                ) : filteredHistory.length === 0 ? (
-                  <Empty
-                    image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    description={<Text type="secondary">{historyKeyword ? "没有匹配的视频" : "还没有分析过视频"}</Text>}
-                    style={{ padding: "24px 0" }}
+                </div>
+                <div className="subtitle-lines-scroll">
+                  {subtitleText
+                    ? subtitleText.split("\n").map((line, idx) => {
+                        const sec = parseTimestampFromSubtitleLine(line);
+                        return (
+                          <div
+                            key={`${idx}-${line.slice(0, 12)}`}
+                            data-ts={sec !== null ? String(sec) : undefined}
+                            className={`subtitle-line-row ${sec !== null ? "has-timestamp" : ""}`}
+                          >
+                            {line}
+                          </div>
+                        );
+                      })
+                    : "加载中..."}
+                </div>
+              </div>
+            ),
+          },
+          {
+            key: "history",
+            label: <span><HistoryOutlined /> 历史</span>,
+            children: (
+              <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+                <div style={{ padding: "8px 12px", flexShrink: 0 }}>
+                  <Input
+                    size="small"
+                    placeholder="搜索标题或UP主..."
+                    prefix={<SearchOutlined />}
+                    allowClear
+                    value={historyKeyword}
+                    onChange={(e) => setHistoryKeyword(e.target.value)}
                   />
-                ) : (
-                  <div style={{ padding: "0 12px 12px" }}>
-                    {filteredHistory.map((v) => (
-                      <div
-                        key={v.id}
-                        className={`history-item ${v.bvid === bvid ? "history-item-active" : ""}`}
-                        onClick={() => handleSelectHistoryVideo(v)}
-                      >
-                        <div className="history-item-cover">
-                          {v.pic ? (
-                            <img src={v.pic} alt={v.title} />
-                          ) : (
-                            <div className="history-item-placeholder">
-                              <PlayCircleOutlined />
-                            </div>
-                          )}
-                          <span className="history-item-duration">{formatDuration(v.duration)}</span>
+                </div>
+                <div style={{ flex: 1, overflowY: "auto" }}>
+                  {historyLoading ? (
+                    <div style={{ textAlign: "center", padding: 32 }}>
+                      <Spin size="small" />
+                    </div>
+                  ) : filteredHistory.length === 0 ? (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description={<Text type="secondary">{historyKeyword ? "没有匹配的视频" : "还没有分析过视频"}</Text>}
+                      style={{ padding: "24px 0" }}
+                    />
+                  ) : (
+                    <div style={{ padding: "0 12px 12px" }}>
+                      {filteredHistory.map((v) => (
+                        <div
+                          key={v.id}
+                          className={`history-item ${v.bvid === bvid ? "history-item-active" : ""}`}
+                          onClick={() => handleSelectHistoryVideo(v)}
+                        >
+                          <div className="history-item-cover">
+                            {v.pic ? (
+                              <img src={v.pic} alt={v.title} />
+                            ) : (
+                              <div className="history-item-placeholder">
+                                <PlayCircleOutlined />
+                              </div>
+                            )}
+                            <span className="history-item-duration">{formatDuration(v.duration)}</span>
+                          </div>
+                          <div className="history-item-info">
+                            <div className="history-item-title">{v.title}</div>
+                            <div className="history-item-owner">{v.ownerName}</div>
+                          </div>
                         </div>
-                        <div className="history-item-info">
-                          <div className="history-item-title">{v.title}</div>
-                          <div className="history-item-owner">{v.ownerName}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ),
-        },
-      ]}
+            ),
+          },
+        ].filter((item) => isMultiPlatform ? item.key !== "subtitle" : true)
+      }
     />
   );
 
@@ -870,7 +1461,7 @@ export default function AnalyzePage() {
         }}
       >
         <Link href="/" className="header-back-link" style={{ fontWeight: 700, fontSize: 16, color: "#fb7299", display: "flex", alignItems: "center", gap: 6 }}>
-          <ArrowLeftOutlined /> {isHistoryMode ? "历史分析" : "B站视频分析"}
+          <ArrowLeftOutlined /> {isHistoryMode ? "历史分析" : `${platform === "bilibili" ? "B站" : platform === "douyin" ? "抖音" : "小红书"}视频分析`}
         </Link>
         {videoInfo && (
           <Text className="header-video-title" type="secondary" ellipsis style={{ maxWidth: 240, fontSize: 13 }}>
@@ -899,6 +1490,29 @@ export default function AnalyzePage() {
           </Button>
         </Space.Compact>
         <div className="header-actions">
+        <Button
+          icon={<TagsOutlined />}
+          onClick={handleOpenTagModal}
+          disabled={!bvid || isHistoryMode}
+          style={{ borderColor: "var(--border)", color: "azure" }}
+        >
+          标签
+        </Button>
+        <Button
+          icon={<FileMarkdownOutlined />}
+          onClick={handleOpenTemplateModal}
+          disabled={!subtitleText || !summary}
+          style={{ borderColor: "#8b5cf6", color: "azure" }}
+        >
+          模板输出
+        </Button>
+        <Button
+          icon={<BookOutlined />}
+          onClick={() => router.push("/notebooks")}
+          style={{ borderColor: "var(--border)", color: "azure" }}
+        >
+          智能合集
+        </Button>
         <Button
           icon={<SaveOutlined style={{ color: "bisque" }}/>}
           onClick={handleOpenSaveModal}
@@ -986,7 +1600,7 @@ export default function AnalyzePage() {
           )}
           <Tabs
             activeKey={activeTab}
-            onChange={(key) => setActiveTab(key as "summary" | "chat")}
+            onChange={(key) => setActiveTab(key as "summary" | "mindmap" | "chat")}
             className={isMobile ? "main-tabs-mobile" : ""}
             style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}
             items={[
@@ -1021,15 +1635,49 @@ export default function AnalyzePage() {
                         )}
                       </div>
                     ) : (
-                      <div
-                        className="markdown-body"
-                        dangerouslySetInnerHTML={{
-                          __html: marked.parse(summary.replace(/<br\s*\/?>/gi, "\n")) +
-                            (summaryLoading
-                              ? '<span class="cursor-blink"></span>'
-                              : ""),
-                        }}
+                      <>
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                          <Button
+                            size="small"
+                            icon={<CopyOutlined />}
+                            type={summaryCopied ? "primary" : "default"}
+                            onClick={handleCopySummary}
+                            disabled={!summary}
+                          >
+                            {summaryCopied ? "已复制" : "复制摘要"}
+                          </Button>
+                        </div>
+                        <div
+                          className="markdown-body"
+                          dangerouslySetInnerHTML={{
+                            __html: marked.parse(summary.replace(/<br\s*\/?>/gi, "\n")) +
+                              (summaryLoading
+                                ? '<span class="cursor-blink"></span>'
+                                : ""),
+                          }}
+                        />
+                      </>
+                    )}
+                  </div>
+                ),
+              },
+              {
+                key: "mindmap",
+                label: (
+                  <span>
+                    <ApartmentOutlined /> 思维导图
+                  </span>
+                ),
+                children: (
+                  <div className="mindmap-pane">
+                    {!summary ? (
+                      <Empty
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        description={<Text type="secondary">请先完成摘要生成，再查看思维导图</Text>}
+                        style={{ paddingTop: 80 }}
                       />
+                    ) : (
+                      <MindMapView markdown={summary} />
                     )}
                   </div>
                 ),
@@ -1242,6 +1890,87 @@ export default function AnalyzePage() {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        title={<span><TagsOutlined /> 视频标签</span>}
+        open={tagModalOpen}
+        onCancel={() => setTagModalOpen(false)}
+        onOk={handleSaveVideoTags}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={tagSubmitting}
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Text type="secondary">选择当前视频标签：</Text>
+          <Select
+            mode="multiple"
+            style={{ width: "100%" }}
+            value={selectedTagIds}
+            onChange={(vals) => setSelectedTagIds(vals)}
+            options={allTags.map((tag) => ({
+              value: tag.id,
+              label: tag.name,
+            }))}
+            placeholder="选择标签"
+          />
+          <Space.Compact style={{ width: "100%" }}>
+            <Input
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              onPressEnter={handleCreateTag}
+              placeholder="新建标签名..."
+            />
+            <Button onClick={handleCreateTag} disabled={!newTagName.trim()}>
+              新建标签
+            </Button>
+          </Space.Compact>
+        </Space>
+      </Modal>
+
+      <Modal
+        title={<span><FileMarkdownOutlined /> 模板输出</span>}
+        open={templateModalOpen}
+        onCancel={() => setTemplateModalOpen(false)}
+        footer={null}
+        width={760}
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Select
+            style={{ width: "100%" }}
+            value={templateId || undefined}
+            onChange={(v) => setTemplateId(v)}
+            options={templates.map((tpl) => ({
+              value: tpl.id,
+              label: `${tpl.name} - ${tpl.description}`,
+            }))}
+            placeholder="选择模板"
+          />
+          <Input.TextArea
+            rows={3}
+            value={templateExtraPrompt}
+            onChange={(e) => setTemplateExtraPrompt(e.target.value)}
+            placeholder="可选：补充风格或目标受众要求"
+          />
+          <Space>
+            <Button type="primary" loading={templateLoading} onClick={handleGenerateTemplate}>
+              生成
+            </Button>
+            <Button
+              icon={<CopyOutlined />}
+              disabled={!templateOutput}
+              onClick={async () => {
+                await navigator.clipboard.writeText(templateOutput);
+                message.success("已复制");
+              }}
+            >
+              复制
+            </Button>
+          </Space>
+          <div className="template-output-box">
+            {templateOutput || (templateLoading ? "正在生成..." : "生成结果将显示在这里")}
+          </div>
+        </Space>
       </Modal>
 
       {/* 遮罩层 */}
@@ -1536,6 +2265,90 @@ export default function AnalyzePage() {
           background: rgba(15, 15, 40, 0.6);
           backdrop-filter: blur(6px);
         }
+        .subtitle-note-toolbar {
+          padding: 10px 12px 8px;
+          border-bottom: 1px solid var(--border);
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+        .timestamp-note-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          max-height: 84px;
+          overflow: auto;
+        }
+        .timestamp-note-tag {
+          cursor: pointer;
+          max-width: 240px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          border-radius: 999px;
+          border-color: rgba(251, 114, 153, 0.2);
+          background: rgba(251, 114, 153, 0.08);
+          color: #fb7299;
+        }
+        .subtitle-lines-scroll {
+          flex: 1;
+          min-height: 0;
+          overflow: auto;
+          padding: 10px 12px 12px;
+        }
+        .subtitle-line-row {
+          padding: 2px 4px;
+          border-radius: 6px;
+          font-size: 12px;
+          line-height: 1.8;
+          color: var(--muted-foreground);
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        .subtitle-line-row.has-timestamp:hover {
+          background: rgba(251, 114, 153, 0.06);
+        }
+        .template-output-box {
+          min-height: 240px;
+          max-height: 420px;
+          overflow: auto;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          background: rgba(255, 255, 255, 0.02);
+          padding: 12px;
+          white-space: pre-wrap;
+          line-height: 1.7;
+          font-size: 13px;
+          color: var(--foreground);
+        }
+        .mindmap-pane {
+          flex: 1;
+          overflow: auto;
+          padding: 20px 24px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .mindmap-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .mindmap-code-block {
+          margin: 0;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 14px;
+          background: rgba(255, 255, 255, 0.02);
+          color: #cfe2ff;
+          font-size: 12px;
+          line-height: 1.7;
+          overflow: auto;
+          white-space: pre;
+        }
         @media (max-width: 600px) {
           .skill-drawer {
             width: 100%;
@@ -1749,6 +2562,9 @@ export default function AnalyzePage() {
           }
           .main-tabs-mobile .ant-tabs-tabpane > div {
             padding: 14px !important;
+          }
+          .main-tabs-mobile .mindmap-pane {
+            padding: 12px !important;
           }
           .main-tabs-mobile .markdown-body {
             font-size: 13px;

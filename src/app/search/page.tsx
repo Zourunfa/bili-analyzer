@@ -2,14 +2,31 @@
 
 import { useState } from "react";
 import {
-  Input, Button, Card, Typography, Space, Radio, Tag, Empty, Spin, Row, Col, Divider, message,
+  Input,
+  Button,
+  Typography,
+  Space,
+  Radio,
+  Tag,
+  Empty,
+  Spin,
+  message,
+  Pagination,
 } from "antd";
-import { SearchOutlined, PlayCircleOutlined, TagOutlined, BulbOutlined, QuestionCircleOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import {
+  SearchOutlined,
+  PlayCircleOutlined,
+  TagOutlined,
+  BulbOutlined,
+  QuestionCircleOutlined,
+  ThunderboltOutlined,
+} from "@ant-design/icons";
 import Link from "next/link";
 
 const { Title, Text, Paragraph } = Typography;
 
 interface SearchResult {
+  source: "subtitle" | "knowledge";
   id: string;
   type: string;
   content: string;
@@ -19,6 +36,7 @@ interface SearchResult {
   videoTitle?: string;
   videoBvid?: string;
   score?: number;
+  ownerName?: string;
 }
 
 const typeConfig: Record<string, { label: string; color: string; icon: React.ReactNode }> = {
@@ -37,24 +55,30 @@ function formatTimestamp(seconds: number | null): string {
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<"fulltext" | "semantic">("fulltext");
+  const [mode, setMode] = useState<"hybrid" | "subtitle" | "knowledge" | "semantic">("hybrid");
+  const [sourceFilter, setSourceFilter] = useState<"all" | "subtitle" | "knowledge">("all");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [searched, setSearched] = useState(false);
+  const pageSize = 12;
 
-  const handleSearch = async () => {
+  const handleSearch = async (nextPage = 1) => {
     if (!query.trim()) return;
     setLoading(true);
     setSearched(true);
     try {
-      const res = await fetch("/api/knowledge/search", {
+      const res = await fetch("/api/search/global", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: query.trim(), mode, topK: 20 }),
+        body: JSON.stringify({ query: query.trim(), mode, page: nextPage, pageSize }),
       });
       const data = await res.json();
       if (res.ok) {
-        setResults(data.results);
+        setResults(data.results || []);
+        setTotal(data.total || 0);
+        setPage(nextPage);
       } else {
         message.error(data.error || "搜索失败");
       }
@@ -65,69 +89,120 @@ export default function SearchPage() {
     }
   };
 
+  const groupedResults = {
+    subtitle: results.filter((r) => r.source === "subtitle"),
+    knowledge: results.filter((r) => r.source === "knowledge"),
+  };
+
+  const visibleGroups =
+    sourceFilter === "all"
+      ? groupedResults
+      : {
+          subtitle: sourceFilter === "subtitle" ? groupedResults.subtitle : [],
+          knowledge: sourceFilter === "knowledge" ? groupedResults.knowledge : [],
+        };
+
   return (
     <div className="search-page">
       <div className="search-header">
         <div className="search-header-icon">
           <SearchOutlined />
         </div>
-        <Title level={3} style={{ margin: 0, color: "var(--foreground)" }}>知识检索</Title>
+        <Title level={3} style={{ margin: 0, color: "var(--foreground)" }}>
+          知识检索
+        </Title>
       </div>
       <Paragraph type="secondary" style={{ marginBottom: 24 }}>
-        搜索你分析过的视频中的知识点
+        搜索你分析过的视频中的字幕与知识点
       </Paragraph>
 
-      {/* 搜索栏 */}
       <div className="search-card">
         <Space.Compact style={{ width: "100%", marginBottom: 12 }}>
           <Input
             size="large"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onPressEnter={handleSearch}
-            placeholder="输入关键词或问题搜索知识点..."
+            onPressEnter={() => handleSearch(1)}
+            placeholder="输入关键词或问题..."
             prefix={<SearchOutlined style={{ color: "var(--muted-foreground)" }} />}
           />
-          <Button type="primary" size="large" onClick={handleSearch} loading={loading}>
+          <Button type="primary" size="large" onClick={() => handleSearch(1)} loading={loading}>
             搜索
           </Button>
         </Space.Compact>
-        <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)} size="small">
-          <Radio.Button value="fulltext">全文搜索</Radio.Button>
-          <Radio.Button value="semantic">语义搜索</Radio.Button>
-        </Radio.Group>
+        <Space wrap>
+          <Radio.Group value={mode} onChange={(e) => setMode(e.target.value)} size="small">
+            <Radio.Button value="hybrid">混合搜索</Radio.Button>
+            <Radio.Button value="subtitle">字幕搜索</Radio.Button>
+            <Radio.Button value="knowledge">知识点搜索</Radio.Button>
+            <Radio.Button value="semantic">语义搜索</Radio.Button>
+          </Radio.Group>
+          <Radio.Group value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} size="small">
+            <Radio.Button value="all">全部来源</Radio.Button>
+            <Radio.Button value="subtitle">仅字幕</Radio.Button>
+            <Radio.Button value="knowledge">仅知识点</Radio.Button>
+          </Radio.Group>
+        </Space>
       </div>
 
-      {/* 搜索结果 */}
       {loading && (
         <div style={{ textAlign: "center", padding: 48 }}>
           <Spin size="large" />
         </div>
       )}
 
-      {!loading && searched && results.length === 0 && (
-        <Empty description="未找到相关知识点" />
-      )}
+      {!loading && searched && results.length === 0 && <Empty description="未找到相关内容" />}
 
       {!loading && results.length > 0 && (
         <div className="search-results">
           <div className="search-results-header">
-            <Text type="secondary">找到 {results.length} 个结果</Text>
+            <Text type="secondary">找到 {total || results.length} 个结果</Text>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              {mode === "semantic" ? "按语义相似度排序" : "按全文匹配排序"}
+              {mode === "semantic" ? "语义排序" : "综合排序"}
             </Text>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {results.map((result, idx) => {
-              const config = typeConfig[result.type] || { label: result.type, color: "var(--muted-foreground)", icon: null };
-              return (
-                <div
-                  key={result.id}
-                  className="search-result-card"
-                  style={{ animationDelay: `${idx * 0.04}s` }}
-                >
-                  <div style={{ display: "flex", gap: 12 }}>
-                    <div style={{ flex: 1 }}>
+
+          {visibleGroups.subtitle.length > 0 && (
+            <>
+              <div className="search-group-title">字幕命中</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+                {visibleGroups.subtitle.map((result, idx) => (
+                  <div key={result.id} className="search-result-card" style={{ animationDelay: `${idx * 0.04}s` }}>
+                    <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                      <Tag color="processing">字幕</Tag>
+                      {result.ownerName && (
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {result.ownerName}
+                        </Text>
+                      )}
+                    </div>
+                    <Paragraph style={{ marginBottom: 8, fontSize: 14, lineHeight: 1.8, color: "var(--foreground)" }}>
+                      {result.content}
+                    </Paragraph>
+                    {result.videoTitle && (
+                      <Link href={`/analyze/${result.videoBvid}`} className="search-result-video-link">
+                        <PlayCircleOutlined /> {result.videoTitle}
+                      </Link>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {visibleGroups.knowledge.length > 0 && (
+            <>
+              <div className="search-group-title">知识点命中</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {visibleGroups.knowledge.map((result, idx) => {
+                  const config =
+                    typeConfig[result.type] || {
+                      label: result.type,
+                      color: "var(--muted-foreground)",
+                      icon: null,
+                    };
+                  return (
+                    <div key={result.id} className="search-result-card" style={{ animationDelay: `${idx * 0.04}s` }}>
                       <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
                         <Tag
                           icon={config.icon}
@@ -160,10 +235,20 @@ export default function SearchPage() {
                         </Link>
                       )}
                     </div>
-                  </div>
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end" }}>
+            <Pagination
+              current={page}
+              total={total}
+              pageSize={pageSize}
+              showSizeChanger={false}
+              onChange={(p) => handleSearch(p)}
+            />
           </div>
         </div>
       )}
@@ -173,14 +258,12 @@ export default function SearchPage() {
           <div className="search-empty-icon">
             <ThunderboltOutlined />
           </div>
-          <Text type="secondary" style={{ fontSize: 15 }}>输入关键词开始搜索你的知识库</Text>
+          <Text type="secondary" style={{ fontSize: 15 }}>
+            输入关键词开始搜索你的知识库
+          </Text>
           <div className="search-empty-hints">
             {["React", "机器学习", "系统设计"].map((hint) => (
-              <Tag
-                key={hint}
-                className="search-hint-tag"
-                onClick={() => { setQuery(hint); }}
-              >
+              <Tag key={hint} className="search-hint-tag" onClick={() => setQuery(hint)}>
                 {hint}
               </Tag>
             ))}
@@ -221,9 +304,20 @@ export default function SearchPage() {
         .search-results {
           animation: fadeInUp 0.3s ease-out;
         }
+        .search-group-title {
+          font-size: 13px;
+          color: var(--muted-foreground);
+          margin-bottom: 8px;
+        }
         @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
+          from {
+            opacity: 0;
+            transform: translateY(8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
         }
         .search-results-header {
           display: flex;
@@ -260,29 +354,29 @@ export default function SearchPage() {
           padding: 80px 0;
         }
         .search-empty-icon {
-          width: 56px;
-          height: 56px;
-          border-radius: 14px;
-          background: rgba(76, 201, 240, 0.1);
+          width: 64px;
+          height: 64px;
+          border-radius: 50%;
+          background: rgba(251, 114, 153, 0.12);
+          color: #fb7299;
+          font-size: 28px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 24px;
-          color: #4cc9f0;
         }
         .search-empty-hints {
           display: flex;
           gap: 8px;
+          flex-wrap: wrap;
+          justify-content: center;
           margin-top: 8px;
         }
         .search-hint-tag {
           cursor: pointer;
-          transition: all 0.2s;
-          border-radius: 8px;
-        }
-        .search-hint-tag:hover {
-          border-color: #fb7299;
+          border-radius: 999px;
+          border-color: rgba(251, 114, 153, 0.25);
           color: #fb7299;
+          background: rgba(251, 114, 153, 0.08);
         }
       `}</style>
     </div>
