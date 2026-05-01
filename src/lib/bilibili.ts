@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, writeFile, rm } from "fs/promises";
 import { createWriteStream, existsSync } from "fs";
 import { join } from "path";
 import { Writable } from "stream";
+import { execFile } from "child_process";
 
 const BILIBILI_API_BASE = "https://api.bilibili.com";
 const DEFAULT_FETCH_TIMEOUT_MS = 12_000;
@@ -524,13 +525,13 @@ export async function getSubtitle(
   const res = await fetch(url, { headers: getHeaders() });
   const data = await res.json();
 
-  console.log(`[bilibili] player/wbi/v2 response:`, JSON.stringify(data).slice(0, 500));
+  console.log(`[bilibili] player/wbi/v2 response:`, (JSON.stringify(data) ?? "").slice(0, 500));
 
   if (data.code !== 0) {
     throw new Error(`获取字幕信息失败: ${data.message} (code: ${data.code})`);
   }
 
-  console.log(`[bilibili] subtitle data:`, JSON.stringify(data.data?.subtitle).slice(0, 500));
+  console.log(`[bilibili] subtitle data:`, (JSON.stringify(data.data?.subtitle) ?? "undefined").slice(0, 500));
 
   const subtitles = data.data?.subtitle?.subtitles;
   if (!subtitles || subtitles.length === 0) {
@@ -574,9 +575,107 @@ function formatTime(seconds: number): string {
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
+type PlayurlResponse = {
+  code: number;
+  message?: string;
+  data?: {
+    dash?: {
+      audio?: Array<{ baseUrl?: string; base_url?: string }>;
+    };
+    durl?: Array<{ url?: string; backup_url?: string[] }>;
+  };
+};
+
+/**
+ * playurl 必须带完整的访客 cookies（buvid3/buvid4/b_lsid/_uuid 等），
+ * 否则会触发 B 站风控返回只含 v_voucher 的响应。
+ * 这里把匿名 cookies 与 SESSDATA 系列合并，SESSDATA 已配置时叠加在最后（优先级更高）。
+ */
+async function buildPlayurlHeaders(): Promise<Record<string, string>> {
+  const anon = await getAnonymousCookies();
+  const sessdata = normalizeSessdata(process.env.BILIBILI_SESSDATA || "");
+  const dedeUserId = (process.env.BILIBILI_DEDE_USERID || "").trim();
+  const biliJct = (process.env.BILIBILI_BILI_JCT || "").trim();
+
+  const cookieParts: string[] = [];
+  if (anon) cookieParts.push(anon);
+  if (sessdata) cookieParts.push(`SESSDATA=${sessdata}`);
+  if (dedeUserId) cookieParts.push(`DedeUserID=${dedeUserId}`);
+  if (biliJct) cookieParts.push(`bili_jct=${biliJct}`);
+
+  return {
+    Cookie: cookieParts.join("; "),
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    Referer: "https://www.bilibili.com",
+    Origin: "https://www.bilibili.com",
+    "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"macOS"',
+  };
+}
+
+async function fetchPlayurl(
+  bvid: string,
+  cid: number,
+  fnval: string
+): Promise<PlayurlResponse> {
+  const { imgKey, subKey } = await getWbiKeys();
+  const params: Record<string, string> = {
+    bvid,
+    cid: cid.toString(),
+    fnval,
+    fnver: "0",
+    fourk: "1",
+  };
+  const query = signWbiParams(params, imgKey, subKey);
+  const url = `${BILIBILI_API_BASE}/x/player/wbi/playurl?${query}`;
+  const headers = await buildPlayurlHeaders();
+  const res = await fetch(url, { headers });
+  return (await res.json()) as PlayurlResponse;
+}
+
+function isVoucherResponse(data: PlayurlResponse): boolean {
+  // 风控签名：data 只有 v_voucher，没有 dash/durl
+  const d = data.data as { v_voucher?: string; dash?: unknown; durl?: unknown } | undefined;
+  return !!d?.v_voucher && !d.dash && !d.durl;
+}
+
+function ffmpegExtractAudio(input: string, output: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "ffmpeg",
+      ["-i", input, "-vn", "-acodec", "copy", "-y", output],
+      { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 },
+      (err, _stdout, stderr) => {
+        if (err) {
+          // copy 失败时（编码不兼容 m4a 容器）回退到重编码
+          execFile(
+            "ffmpeg",
+            ["-i", input, "-vn", "-acodec", "aac", "-b:a", "128k", "-y", output],
+            { timeout: 300_000, maxBuffer: 10 * 1024 * 1024 },
+            (err2, _o2, stderr2) => {
+              if (err2) reject(new Error(stderr2 || stderr || err2.message));
+              else resolve();
+            }
+          );
+          return;
+        }
+        resolve();
+      }
+    );
+  });
+}
+
 /**
  * 通过 B站 API 直接获取音频流并下载（绕过 yt-dlp 的 412 问题）
- * onProgress: (percent: number, downloadedMB: string, totalMB: string) => void
+ *
+ * 策略（按优先级）：
+ *   1) playurl(fnval=4048) -> dash.audio  最常见
+ *   2) 重试一次 dash（B站调度抖动 / CDN 选择不同）
+ *   3) durl 兜底：下载 MP4/FLV 合流文件 + ffmpeg 抽音频
  */
 export async function downloadAudioViaApi(
   bvid: string,
@@ -590,29 +689,66 @@ export async function downloadAudioViaApi(
   const downloadTimeoutMs =
     Number.isFinite(downloadTimeoutRaw) && downloadTimeoutRaw > 10_000 ? downloadTimeoutRaw : 300_000;
 
-  const { imgKey, subKey } = await getWbiKeys();
+  // fnval=4048 = 16(DASH) | 64(HDR) | 128(4K) | 256(Dolby Audio) | 512(Dolby Vision) | 1024(8K) | 2048(AV1)
+  // 旧的 fnval=16 在部分视频上 B 站只回 durl 不回 dash，导致 dash.audio 取不到
+  const FNVAL_DASH = "4048";
 
-  // 请求 DASH 格式的视频流信息
-  const params: Record<string, string> = {
-    bvid,
-    cid: cid.toString(),
-    fnval: "16",       // 请求 DASH 格式
-    fourk: "1",
-  };
+  // 提前预热 buvid3，并清掉旧的匿名 cookies 缓存以拿一组新鲜的（30 分钟 TTL）
+  await ensureBuvid3();
 
-  const query = signWbiParams(params, imgKey, subKey);
-  const url = `${BILIBILI_API_BASE}/x/player/wbi/playurl?${query}`;
-
-  const res = await fetch(url, { headers: getHeaders() });
-  const data = await res.json();
+  let data = await fetchPlayurl(bvid, cid, FNVAL_DASH);
 
   if (data.code !== 0) {
-    throw new Error(`获取视频流地址失败: ${data.message}`);
+    throw new Error(`获取视频流地址失败: ${data.message ?? "未知错误"}`);
   }
 
-  // 从 DASH 响应中提取音频流
-  const audioList = data.data?.dash?.audio;
+  // 风控命中：清缓存的访客 cookies 后重试（拿一组新的 buvid3/b_lsid）
+  if (isVoucherResponse(data)) {
+    console.warn(
+      `[bilibili] playurl 命中风控 v_voucher，刷新访客 cookies 后重试: bvid=${bvid}`
+    );
+    cachedCookies = null;
+    cookiesExpireAt = 0;
+    globalBuvid3 = null;
+    await ensureBuvid3();
+    await new Promise((r) => setTimeout(r, 1200));
+    data = await fetchPlayurl(bvid, cid, FNVAL_DASH);
+  }
+
+  // 仍然命中风控 → 给出明确错误信息
+  if (isVoucherResponse(data)) {
+    const sessdataValid = cachedLoginStatus === true;
+    throw new Error(
+      sessdataValid
+        ? "B站风控拦截（v_voucher），请稍后重试或更换网络"
+        : "B站风控拦截（v_voucher），通常是 SESSDATA 失效或未配置导致。请更新 .env 中的 BILIBILI_SESSDATA"
+    );
+  }
+
+  let audioList = data.data?.dash?.audio;
+
+  // dash.audio 缺失：重试一次（B 站调度抖动会换 CDN）
   if (!audioList || audioList.length === 0) {
+    console.warn(
+      `[bilibili] dash.audio 缺失，重试 playurl (bvid=${bvid}, cid=${cid}, hasDash=${!!data.data?.dash}, hasDurl=${!!data.data?.durl})`
+    );
+    await new Promise((r) => setTimeout(r, 800));
+    data = await fetchPlayurl(bvid, cid, FNVAL_DASH);
+    if (data.code === 0 && !isVoucherResponse(data)) {
+      audioList = data.data?.dash?.audio;
+    }
+  }
+
+  // 仍然没有 dash.audio：走 durl 兜底（下载合流 MP4/FLV，ffmpeg 抽音频）
+  if (!audioList || audioList.length === 0) {
+    const durl = data.data?.durl;
+    if (durl && durl.length > 0 && durl[0].url) {
+      console.warn(`[bilibili] dash 不可用，走 durl 兜底: bvid=${bvid}`);
+      return downloadDurlAndExtractAudio(durl[0].url, maxAudioBytes, maxAudioMB, downloadTimeoutMs, onProgress);
+    }
+    console.error(
+      `[bilibili] playurl 响应无 dash.audio 也无 durl: ${JSON.stringify(data).slice(0, 400)}`
+    );
     throw new Error("未找到音频流");
   }
 
@@ -698,6 +834,98 @@ export async function downloadAudioViaApi(
     console.log(`[bilibili] 音频下载完成: ${outputPath} (${(downloaded / 1024 / 1024).toFixed(1)}MB)`);
 
     return outputPath;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+/**
+ * durl 兜底：下载 B 站合流 MP4/FLV 后用 ffmpeg 抽音频
+ * 限制下载体积上限放宽到 maxAudioMB * 5（视频+音频合流通常更大），
+ * 抽出来的纯音频再受 maxAudioBytes 约束。
+ */
+async function downloadDurlAndExtractAudio(
+  videoUrl: string,
+  maxAudioBytes: number,
+  maxAudioMB: number,
+  downloadTimeoutMs: number,
+  onProgress?: (percent: number, downloaded: string, total: string) => void
+): Promise<string> {
+  const muxedMaxBytes = maxAudioBytes * 5; // 合流文件比纯音频大很多
+  const tmpDir = join("/tmp/bilibili-subtitle", randomUUID());
+  await mkdir(tmpDir, { recursive: true });
+  const muxedPath = join(tmpDir, "muxed.mp4");
+  const audioPath = join(tmpDir, "audio.m4a");
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), downloadTimeoutMs);
+
+  try {
+    const res = await fetch(videoUrl, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Referer: "https://www.bilibili.com",
+      },
+    });
+    if (!res.ok) throw new Error(`下载视频失败: HTTP ${res.status}`);
+
+    const contentLength = parseInt(res.headers.get("content-length") || "0", 10);
+    if (contentLength > muxedMaxBytes) {
+      throw new Error(
+        `视频过大（${(contentLength / 1024 / 1024).toFixed(1)}MB），超过限制 ${(muxedMaxBytes / 1024 / 1024).toFixed(0)}MB`
+      );
+    }
+    const totalMB = contentLength ? (contentLength / 1024 / 1024).toFixed(1) : "?";
+    const fileStream = createWriteStream(muxedPath);
+    const reader = res.body?.getReader();
+    if (!reader) throw new Error("无法读取视频流");
+
+    let downloaded = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      downloaded += value.length;
+      if (downloaded > muxedMaxBytes) {
+        reader.cancel().catch(() => {});
+        fileStream.destroy();
+        throw new Error(`视频过大（>${(muxedMaxBytes / 1024 / 1024).toFixed(0)}MB），请换短一点的视频`);
+      }
+      const ok = fileStream.write(value);
+      if (!ok) {
+        await new Promise<void>((resolve, reject) => {
+          fileStream.once("drain", () => resolve());
+          fileStream.once("error", reject);
+        });
+      }
+      if (onProgress && contentLength) {
+        const percent = Math.round((downloaded / contentLength) * 100);
+        onProgress(percent, (downloaded / 1024 / 1024).toFixed(1), totalMB);
+      }
+    }
+    await new Promise<void>((resolve, reject) => {
+      fileStream.once("finish", () => resolve());
+      fileStream.once("error", reject);
+      fileStream.end();
+    });
+
+    console.log(`[bilibili] durl 下载完成 (${(downloaded / 1024 / 1024).toFixed(1)}MB)，开始 ffmpeg 抽音频`);
+    await ffmpegExtractAudio(muxedPath, audioPath);
+    await rm(muxedPath, { force: true });
+
+    if (!existsSync(audioPath)) throw new Error("ffmpeg 抽音频失败：输出文件不存在");
+
+    const { statSync } = await import("fs");
+    const audioSize = statSync(audioPath).size;
+    if (audioSize > maxAudioBytes) {
+      await rm(audioPath, { force: true });
+      throw new Error(`音频过大（${(audioSize / 1024 / 1024).toFixed(1)}MB），超过限制 ${maxAudioMB}MB`);
+    }
+
+    console.log(`[bilibili] durl 音频抽取完成: ${audioPath} (${(audioSize / 1024 / 1024).toFixed(1)}MB)`);
+    return audioPath;
   } finally {
     clearTimeout(timeoutHandle);
   }

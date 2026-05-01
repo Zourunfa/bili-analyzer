@@ -23,7 +23,7 @@ function exec(
   timeout = 300_000
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout }, (err, stdout, stderr) => {
+    execFile(cmd, args, { timeout, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
         reject(new Error(stderr || err.message));
         return;
@@ -31,6 +31,24 @@ function exec(
       resolve(stdout.trim());
     });
   });
+}
+
+// bcut/bijian/jianying API 偶发返回缺字段（如 'data'/'state'/'task_id'/'result'）、
+// 网络抖动或 5xx，都属于可重试的瞬时错误。
+function isTransientTranscribeError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    /error:\s*'(data|state|task_id|result|utterances|download_url)'/.test(msg) ||
+    /keyerror/.test(msg) ||
+    /econnreset|etimedout|enetunreach|socket hang up/.test(msg) ||
+    /\b(429|500|502|503|504)\b/.test(msg) ||
+    /connection (reset|aborted|refused)/.test(msg) ||
+    /read timed out|timeout/.test(msg)
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 /**
@@ -72,26 +90,50 @@ export async function downloadAudio(bvid: string): Promise<string> {
 
 /**
  * 语音转写，返回 SRT 文本
+ *
+ * 对 bcut/bijian/jianying 接口的瞬时错误（KeyError: 'data' 等）自动重试。
+ * BaseASR 使用 CRC32 缓存（2天），已成功的分块不会重复请求接口。
  */
 export async function transcribeAudio(
   videoPath: string
 ): Promise<string> {
   const transcribeTimeoutMs = getEnvMs("TRANSCRIBE_TIMEOUT_MS", 900_000);
+  const maxAttempts = Math.max(
+    1,
+    Number.parseInt(process.env.TRANSCRIBE_MAX_RETRIES || "3", 10) || 3
+  );
   const workDir = join(TMP_BASE, randomUUID());
   await mkdir(workDir, { recursive: true });
 
   const outputPath = join(workDir, "subtitle.srt");
-  await exec(VC, [
-    "transcribe",
-    videoPath,
-    "--asr", "bijian",
-    "--format", "srt",
-    "-o", outputPath,
-    "-q",
-  ], transcribeTimeoutMs);
 
-  const srtText = await readFile(outputPath, "utf-8");
-  return srtText;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await exec(VC, [
+        "transcribe",
+        videoPath,
+        "--asr", "bijian",
+        "--format", "srt",
+        "-o", outputPath,
+        "-q",
+      ], transcribeTimeoutMs);
+      return await readFile(outputPath, "utf-8");
+    } catch (err) {
+      lastErr = err;
+      if (attempt >= maxAttempts || !isTransientTranscribeError(err)) {
+        throw err;
+      }
+      const backoffMs = 2_000 * attempt + Math.floor(Math.random() * 1_000);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[transcribe] attempt ${attempt}/${maxAttempts} failed (transient): ${msg.slice(0, 200)} — retrying in ${backoffMs}ms`
+      );
+      await sleep(backoffMs);
+    }
+  }
+
+  throw lastErr instanceof Error ? lastErr : new Error("转写失败");
 }
 
 /**
