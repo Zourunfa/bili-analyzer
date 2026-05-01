@@ -1,99 +1,169 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/db";
 import { generateEmbedding, toVectorString } from "@/lib/embedding";
 
+type SearchMode = "fulltext" | "semantic";
+
+function toSafePage(input: unknown, fallback: number) {
+  const n = Number(input);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.floor(n);
+}
+
+function buildTagAndConditions(userId: string, tagIds?: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) return [];
+  const ids = tagIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
+  return ids.map((tagId) => ({
+    video: {
+      tagRelations: {
+        some: {
+          userId,
+          tagId,
+        },
+      },
+    },
+  }));
+}
+
 export async function POST(req: Request) {
   try {
-    const { query, mode = "fulltext", filters, topK = 10 } = await req.json();
+    const session = await getServerSession(authOptions);
+    const userId = (session?.user as { id?: string } | undefined)?.id;
+    if (!userId) {
+      return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    }
+
+    const body = await req.json();
+    const query = String(body?.query || "").trim();
+    const mode = (body?.mode || "fulltext") as SearchMode;
+    const filters = (body?.filters || {}) as Record<string, unknown>;
+    const page = toSafePage(body?.page, 1);
+    const pageSize = Math.min(50, toSafePage(body?.pageSize ?? body?.topK, 20));
+    const offset = (page - 1) * pageSize;
 
     if (!query) {
       return NextResponse.json({ error: "缺少查询参数" }, { status: 400 });
     }
 
-    let results: Array<{
-      id: string;
-      type: string;
-      content: string;
-      timestamp: number | null;
-      metadata: unknown;
-      videoId: string;
-      videoTitle?: string;
-      videoBvid?: string;
-      score?: number;
-    }> = [];
-
     if (mode === "semantic") {
-      // 语义搜索：使用 pgvector 余弦相似度
       const queryEmbedding = await generateEmbedding(query);
       const vectorStr = toVectorString(queryEmbedding);
+      const params: Array<string | number> = [userId];
 
-      // 构建额外 WHERE 条件
-      let whereClause = "";
-      const params: (string | number)[] = [];
+      let whereSql = "WHERE uv.user_id = $1 AND e.id IS NOT NULL";
 
-      if (filters?.type) {
-        whereClause += " AND kp.type = $1";
-        params.push(filters.type);
-      }
-      if (filters?.notebookId) {
-        whereClause += " AND EXISTS (SELECT 1 FROM notebook_videos nv WHERE nv.video_id = kp.video_id AND nv.notebook_id = $2)";
-        params.push(filters.notebookId);
+      if (typeof filters?.type === "string" && filters.type.trim()) {
+        params.push(filters.type.trim());
+        whereSql += ` AND kp.type = $${params.length}`;
       }
 
-      results = await prisma.$queryRawUnsafe(`
+      if (typeof filters?.videoId === "string" && filters.videoId.trim()) {
+        params.push(filters.videoId.trim());
+        whereSql += ` AND kp.video_id = $${params.length}`;
+      }
+
+      if (Array.isArray(filters?.tagIds)) {
+        const tagIds = filters.tagIds.filter(
+          (v): v is string => typeof v === "string" && v.trim().length > 0
+        );
+        for (const tagId of tagIds) {
+          params.push(tagId);
+          whereSql += ` AND EXISTS (
+            SELECT 1 FROM video_tag_relations vtr
+            WHERE vtr.video_id = kp.video_id
+              AND vtr.user_id = $1
+              AND vtr.tag_id = $${params.length}
+          )`;
+        }
+      }
+
+      const rows = await prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(`
         SELECT
-          kp.id, kp.type, kp.content, kp.timestamp, kp.metadata, kp.video_id,
-          v.title as video_title, v.bvid as video_bvid,
-          1 - (e.vector <=> '${vectorStr}'::vector) as score
+          kp.id,
+          kp.type,
+          kp.content,
+          kp.timestamp,
+          kp.metadata,
+          kp.video_id,
+          v.title AS video_title,
+          v.bvid AS video_bvid,
+          1 - (e.vector <=> '${vectorStr}'::vector) AS score
         FROM knowledge_points kp
         JOIN videos v ON v.id = kp.video_id
+        JOIN user_videos uv ON uv.video_id = kp.video_id
         LEFT JOIN embeddings e ON e.knowledge_point_id = kp.id
-        WHERE e.id IS NOT NULL ${whereClause}
+        ${whereSql}
         ORDER BY e.vector <=> '${vectorStr}'::vector
-        LIMIT ${topK}
-      `);
+        LIMIT ${pageSize}
+        OFFSET ${offset}
+      `, ...params);
 
-      results = results.map((r: Record<string, unknown>) => ({
-        id: r.id as string,
-        type: r.type as string,
-        content: r.content as string,
-        timestamp: r.timestamp as number | null,
-        metadata: r.metadata,
-        videoId: r.video_id as string,
-        videoTitle: r.video_title as string,
-        videoBvid: r.video_bvid as string,
-        score: Number(r.score),
+      const results = rows.map((r) => ({
+        source: "knowledge",
+        id: String(r.id),
+        type: String(r.type),
+        content: String(r.content),
+        timestamp: (r.timestamp as number | null) ?? null,
+        metadata: r.metadata ?? null,
+        videoId: String(r.video_id),
+        videoTitle: String(r.video_title || ""),
+        videoBvid: String(r.video_bvid || ""),
+        score: Number(r.score || 0),
       }));
-    } else {
-      // 全文搜索：使用 ILIKE
-      const where: Record<string, unknown> = {
-        content: { contains: query, mode: "insensitive" },
-      };
-      if (filters?.type) where.type = filters.type;
-      if (filters?.videoId) where.videoId = filters.videoId;
 
-      const points = await prisma.knowledgePoint.findMany({
-        where,
-        take: topK,
-        include: { video: { select: { title: true, bvid: true } } },
-        orderBy: { createdAt: "desc" },
-      });
-
-      results = points.map((p) => ({
-        id: p.id,
-        type: p.type,
-        content: p.content,
-        timestamp: p.timestamp,
-        metadata: p.metadata,
-        videoId: p.videoId,
-        videoTitle: p.video.title,
-        videoBvid: p.video.bvid,
-      }));
+      return NextResponse.json({ results, page, pageSize });
     }
 
-    return NextResponse.json({ results });
+    const andFilters: Record<string, unknown>[] = [
+      { content: { contains: query, mode: "insensitive" } },
+      {
+        video: {
+          userVideos: {
+            some: { userId },
+          },
+        },
+      },
+      ...buildTagAndConditions(userId, filters?.tagIds),
+    ];
+
+    if (typeof filters?.type === "string" && filters.type.trim()) {
+      andFilters.push({ type: filters.type.trim() });
+    }
+    if (typeof filters?.videoId === "string" && filters.videoId.trim()) {
+      andFilters.push({ videoId: filters.videoId.trim() });
+    }
+
+    const where = { AND: andFilters };
+    const [points, total] = await Promise.all([
+      prisma.knowledgePoint.findMany({
+        where,
+        take: pageSize,
+        skip: offset,
+        include: { video: { select: { title: true, bvid: true } } },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.knowledgePoint.count({ where }),
+    ]);
+
+    const results = points.map((p) => ({
+      source: "knowledge",
+      id: p.id,
+      type: p.type,
+      content: p.content,
+      timestamp: p.timestamp,
+      metadata: p.metadata,
+      videoId: p.videoId,
+      videoTitle: p.video.title,
+      videoBvid: p.video.bvid,
+      score: null,
+    }));
+
+    return NextResponse.json({ results, total, page, pageSize });
   } catch (error) {
     console.error("知识检索错误:", error);
     return NextResponse.json({ error: "检索失败" }, { status: 500 });
   }
 }
+

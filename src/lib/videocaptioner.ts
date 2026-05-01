@@ -180,6 +180,38 @@ export function parseSrt(srtText: string): SubtitleItem[] {
 }
 
 /**
+ * 从任意视频 URL 下载音频（使用 yt-dlp）
+ * 支持抖音、小红书等平台
+ */
+export async function downloadAudioFromUrl(videoUrl: string, cookieFile?: string): Promise<string> {
+  const workDir = join(TMP_BASE, randomUUID());
+  await mkdir(workDir, { recursive: true });
+
+  const args = [
+    "--no-playlist",
+    "-f", "bestaudio",
+    "-o", join(workDir, "audio.%(ext)s"),
+    "--extract-audio",
+    "--audio-format", "m4a",
+    "--no-warnings",
+    "-q",
+  ];
+  if (cookieFile) args.push("--cookies", cookieFile);
+  args.push(videoUrl);
+
+  // yt-dlp 下载最佳音轨并提取音频
+  await exec("yt-dlp", args);
+
+  // yt-dlp 输出文件名不确定，找最新的 m4a 文件
+  const files = await readdir(workDir);
+  const audioFile = files.find((f) => f.endsWith(".m4a"));
+  if (!audioFile) {
+    throw new Error("下载音频失败：未找到音频文件");
+  }
+  return join(workDir, audioFile);
+}
+
+/**
  * 清理临时文件
  */
 export async function cleanup(path: string): Promise<void> {

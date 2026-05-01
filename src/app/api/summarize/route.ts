@@ -1,11 +1,13 @@
 import { NextRequest } from "next/server";
 import { streamText } from "ai";
-import { qwen } from "@/lib/qwen";
+import { type ClientModelConfig, getLanguageModel } from "@/lib/llm";
 import { SUMMARY_SYSTEM_PROMPT } from "@/lib/prompts";
 
 export async function POST(req: NextRequest) {
   try {
-    const { subtitleText } = await req.json();
+    const { subtitleText, modelId, modelConfig } = await req.json();
+    const clientModelConfig =
+      modelConfig && typeof modelConfig === "object" ? (modelConfig as ClientModelConfig) : undefined;
 
     if (!subtitleText) {
       return new Response(JSON.stringify({ error: "缺少字幕文本" }), {
@@ -15,7 +17,7 @@ export async function POST(req: NextRequest) {
     }
 
     const result = streamText({
-      model: qwen("qwen-plus"),
+      model: getLanguageModel(typeof modelId === "string" ? modelId : undefined, clientModelConfig),
       system: SUMMARY_SYSTEM_PROMPT,
       messages: [
         {

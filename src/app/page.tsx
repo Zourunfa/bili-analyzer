@@ -10,7 +10,7 @@ import {
 import Link from "next/link";
 
 const features = [
-  { icon: <RobotOutlined />, title: "AI 结构化分析", desc: "自动从视频字幕中提取主题、要点、概念和问答对", color: "#fb7299" },
+  { icon: <RobotOutlined />, title: "AI 结构化分析", desc: "自动从视频内容中提取主题、要点、概念和问答对", color: "#fb7299" },
   { icon: <BookOutlined />, title: "笔记本管理", desc: "按学习主题组织视频，构建个人知识体系", color: "#4cc9f0" },
   { icon: <ThunderboltOutlined />, title: "UP主追踪", desc: "批量分析UP主的所有视频，洞察内容方向", color: "#a78bfa" },
   { icon: <SearchOutlined />, title: "知识检索", desc: "全文和语义搜索，快速定位知识点", color: "#34d399" },
@@ -37,7 +37,14 @@ export default function Home() {
         setError(data.error || "获取视频信息失败");
         return;
       }
-      router.push(`/analyze/${data.bvid}?cid=${data.cid}`);
+      // 多平台跳转
+      const analyzeId = data.platform === "bilibili" ? data.id : data.id;
+      const params = new URLSearchParams();
+      params.set("platform", data.platform);
+      if (data.platform === "bilibili" && data.cid) {
+        params.set("cid", String(data.cid));
+      }
+      router.push(`/analyze/${analyzeId}?${params.toString()}`);
     } catch {
       setError("网络错误，请重试");
     } finally {
@@ -62,7 +69,7 @@ export default function Home() {
             将视频<span className="gradient-text">转化为</span>知识
           </h1>
           <p className="home-hero-desc">
-            粘贴B站视频链接，AI 自动提取结构化知识点，构建你的个人知识库
+            粘贴视频链接，AI 自动提取结构化知识点，构建你的个人知识库
           </p>
           <div className="home-search-card">
             <Space.Compact style={{ width: "100%" }}>
@@ -71,7 +78,7 @@ export default function Home() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 onPressEnter={handleSubmit}
-                placeholder="粘贴 B站视频链接，开始分析..."
+                placeholder="粘贴视频链接（B站/抖音/小红书），开始分析..."
                 disabled={loading}
                 prefix={<SearchOutlined style={{ color: "var(--muted-foreground)" }} />}
                 style={{ flex: 1 }}

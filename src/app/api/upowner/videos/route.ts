@@ -1,55 +1,11 @@
 import { NextResponse } from "next/server";
 import { getUPownerVideos } from "@/lib/bilibili";
-
-type BiliCookieSet = {
-  sessdata?: string;
-  dedeUserId?: string;
-  biliJct?: string;
-};
-
-function setEnvKey(key: "BILIBILI_SESSDATA" | "BILIBILI_DEDE_USERID" | "BILIBILI_BILI_JCT", value?: string) {
-  if (value && value.trim()) process.env[key] = value.trim();
-  else delete process.env[key];
-}
-
-function applyCookieSet(set: BiliCookieSet) {
-  setEnvKey("BILIBILI_SESSDATA", set.sessdata);
-  setEnvKey("BILIBILI_DEDE_USERID", set.dedeUserId);
-  setEnvKey("BILIBILI_BILI_JCT", set.biliJct);
-}
-
-function readServerCookieSet(): BiliCookieSet {
-  return {
-    sessdata: process.env.BILIBILI_SESSDATA,
-    dedeUserId: process.env.BILIBILI_DEDE_USERID,
-    biliJct: process.env.BILIBILI_BILI_JCT,
-  };
-}
-
-async function verifyCookieSet(set: BiliCookieSet): Promise<boolean> {
-  if (!set.sessdata?.trim()) return false;
-  const cookieParts = [`SESSDATA=${set.sessdata.trim()}`];
-  if (set.dedeUserId?.trim()) cookieParts.push(`DedeUserID=${set.dedeUserId.trim()}`);
-  if (set.biliJct?.trim()) cookieParts.push(`bili_jct=${set.biliJct.trim()}`);
-
-  try {
-    const res = await fetch("https://api.bilibili.com/x/web-interface/nav", {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        Accept: "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        Referer: "https://www.bilibili.com",
-        Cookie: cookieParts.join("; "),
-      },
-      redirect: "manual",
-    });
-    const data = await res.json();
-    return data?.code === 0 && data?.data?.isLogin === true;
-  } catch {
-    return false;
-  }
-}
+import {
+  type BiliCookieSet,
+  readServerCookieSet,
+  runWithCookieSet,
+  verifyCookieSetDetailed,
+} from "@/lib/bilibili-auth";
 
 export async function GET(req: Request) {
   const serverCookies = readServerCookieSet();
@@ -71,30 +27,40 @@ export async function GET(req: Request) {
     };
     const hasClientSessdata = !!clientCookies.sessdata?.trim();
     let usingClientCookies = false;
+    let invalidClientCookie = false;
+    let effectiveCookies = serverCookies;
 
-    // 仅当客户端 SESSDATA 验证通过时才覆盖，避免无效本地缓存污染服务端登录态
+    // 客户端 Cookie 采用三态校验：valid 才强制使用；unknown 不直接判失效
     if (hasClientSessdata) {
-      const validClientCookie = await verifyCookieSet(clientCookies);
-      if (validClientCookie) {
-        applyCookieSet(clientCookies);
+      const verifyResult = await verifyCookieSetDetailed(clientCookies);
+      if (verifyResult.status === "valid") {
+        effectiveCookies = clientCookies;
         usingClientCookies = true;
+      } else if (verifyResult.status === "invalid") {
+        invalidClientCookie = true;
+        console.warn("[bilibili] 客户端传入 SESSDATA 无效，回退服务端登录态:", verifyResult.reason || "unknown");
       } else {
-        console.warn("[bilibili] 客户端传入 SESSDATA 无效，已回退服务端环境变量");
-        applyCookieSet(serverCookies);
+        // unknown（网络/风控）不判失效。如果服务端无 cookie，则尝试继续使用客户端值。
+        if (!serverCookies.sessdata?.trim()) {
+          effectiveCookies = clientCookies;
+          usingClientCookies = true;
+        }
+        console.warn("[bilibili] 客户端 SESSDATA 校验状态未知，继续按当前可用 cookie 请求:", verifyResult.reason || "unknown");
       }
-    } else {
-      applyCookieSet(serverCookies);
     }
 
-    const result = await getUPownerVideos(mid, page, pageSize, keyword);
+    const result = await runWithCookieSet(effectiveCookies, async () =>
+      getUPownerVideos(mid, page, pageSize, keyword)
+    );
     if (
       hasClientSessdata &&
       !usingClientCookies &&
+      invalidClientCookie &&
       result.total === 0 &&
       result.videos.length === 0
     ) {
       return NextResponse.json(
-        { error: "本地 SESSDATA 已失效且未获取到公开视频列表。请在“B站 Cookie 配置”里更新 SESSDATA 后重试。" },
+        { error: "本地 SESSDATA 已失效且未获取到公开视频列表。请在\"B站 Cookie 配置\"里更新 SESSDATA 后重试。" },
         { status: 401 }
       );
     }
@@ -109,8 +75,5 @@ export async function GET(req: Request) {
       { error: message },
       { status: isAuthError ? 401 : (isBanned ? 429 : 500) }
     );
-  } finally {
-    // 避免请求级 cookie 覆盖污染后续请求
-    applyCookieSet(serverCookies);
   }
 }

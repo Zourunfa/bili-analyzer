@@ -9,16 +9,16 @@ import {
 } from "@/lib/bilibili";
 import prisma from "@/lib/db";
 import { generateEmbedding, toVectorString } from "@/lib/embedding";
+import { type ClientModelConfig, getLanguageModel } from "@/lib/llm";
 import { KNOWLEDGE_EXTRACTION_PROMPT } from "@/lib/prompts";
-import { qwen } from "@/lib/qwen";
 import { cleanup, parseSrt, transcribeAudio } from "@/lib/videocaptioner";
 import { acquireTranscribeSlot } from "@/lib/transcribe-guard";
-
-type BiliCookieSet = {
-  sessdata?: string;
-  dedeUserId?: string;
-  biliJct?: string;
-};
+import {
+  type BiliCookieSet,
+  readServerCookieSet,
+  runWithCookieSet,
+  verifyCookieSetDetailed,
+} from "@/lib/bilibili-auth";
 
 type AnalyzeVideoInfo = Awaited<ReturnType<typeof getVideoInfo>>;
 type SubtitleResult = {
@@ -32,50 +32,6 @@ type ExtractedPoint = {
   timestamp?: number;
   metadata?: Record<string, unknown>;
 };
-
-function setEnvKey(key: "BILIBILI_SESSDATA" | "BILIBILI_DEDE_USERID" | "BILIBILI_BILI_JCT", value?: string) {
-  if (value && value.trim()) process.env[key] = value.trim();
-  else delete process.env[key];
-}
-
-function applyCookieSet(set: BiliCookieSet) {
-  setEnvKey("BILIBILI_SESSDATA", set.sessdata);
-  setEnvKey("BILIBILI_DEDE_USERID", set.dedeUserId);
-  setEnvKey("BILIBILI_BILI_JCT", set.biliJct);
-}
-
-function readServerCookieSet(): BiliCookieSet {
-  return {
-    sessdata: process.env.BILIBILI_SESSDATA,
-    dedeUserId: process.env.BILIBILI_DEDE_USERID,
-    biliJct: process.env.BILIBILI_BILI_JCT,
-  };
-}
-
-async function verifyCookieSet(set: BiliCookieSet): Promise<boolean> {
-  if (!set.sessdata?.trim()) return false;
-  const cookieParts = [`SESSDATA=${set.sessdata.trim()}`];
-  if (set.dedeUserId?.trim()) cookieParts.push(`DedeUserID=${set.dedeUserId.trim()}`);
-  if (set.biliJct?.trim()) cookieParts.push(`bili_jct=${set.biliJct.trim()}`);
-
-  try {
-    const res = await fetch("https://api.bilibili.com/x/web-interface/nav", {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        Accept: "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        Referer: "https://www.bilibili.com",
-        Cookie: cookieParts.join("; "),
-      },
-      redirect: "manual",
-    });
-    const data = await res.json();
-    return data?.code === 0 && data?.data?.isLogin === true;
-  } catch {
-    return false;
-  }
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -115,11 +71,14 @@ function getSkippableReason(message: string): string | null {
 }
 
 function isNoSubtitleError(message: string): boolean {
+  const normalized = message.toLowerCase();
   return [
     "没有可用的字幕",
-    "subtitle",
-    "字幕",
-  ].some((kw) => message.includes(kw));
+    "该视频没有可用的字幕",
+    "cc 字幕为空",
+    "subtitle list empty",
+    "subtitle is empty",
+  ].some((kw) => normalized.includes(kw.toLowerCase()));
 }
 
 function bumpReason(map: Map<string, number>, reason: string): void {
@@ -257,16 +216,21 @@ function tryParseKnowledgePoints(text: string): ExtractedPoint[] | null {
   }
 }
 
-async function extractKnowledgePoints(title: string, subtitleText: string): Promise<ExtractedPoint[]> {
+async function extractKnowledgePoints(
+  title: string,
+  subtitleText: string,
+  modelId?: string,
+  modelConfig?: ClientModelConfig
+): Promise<ExtractedPoint[]> {
   const { text } = await generateText({
-    model: qwen("qwen-plus"),
+    model: getLanguageModel(modelId, modelConfig),
     prompt: KNOWLEDGE_EXTRACTION_PROMPT(title, subtitleText.slice(0, 24000)),
   });
 
   let points = tryParseKnowledgePoints(text);
   if (!points) {
     const retry = await generateText({
-      model: qwen("qwen-plus"),
+      model: getLanguageModel(modelId, modelConfig),
       prompt:
         `请从以下字幕中提取10个关键知识点，每个包含type(topic/keyPoint/concept/qaPair)、content、timestamp(秒)。\n\n` +
         `视频：${title}\n` +
@@ -327,9 +291,11 @@ async function saveKnowledgePoints(videoId: string, points: ExtractedPoint[]): P
 
 // UP主批量分析 - SSE 流式进度
 export async function POST(req: Request) {
-  const serverCookies = readServerCookieSet();
   try {
-    const { mid, bvids, all } = await req.json();
+    const { mid, bvids, all, modelId, modelConfig } = await req.json();
+    const selectedModelId = typeof modelId === "string" ? modelId : undefined;
+    const clientModelConfig =
+      modelConfig && typeof modelConfig === "object" ? (modelConfig as ClientModelConfig) : undefined;
 
     if (!mid) {
       return NextResponse.json({ error: "缺少 mid 参数" }, { status: 400 });
@@ -340,18 +306,25 @@ export async function POST(req: Request) {
       dedeUserId: req.headers.get("x-bilibili-dede-userid") || undefined,
       biliJct: req.headers.get("x-bilibili-bili-jct") || undefined,
     };
+    const serverCookies = readServerCookieSet();
+    let effectiveCookies = serverCookies;
     if (clientCookies.sessdata?.trim()) {
-      const validClientCookie = await verifyCookieSet(clientCookies);
-      if (!validClientCookie) {
+      const verifyResult = await verifyCookieSetDetailed(clientCookies);
+      if (verifyResult.status === "valid") {
+        effectiveCookies = clientCookies;
+      } else if (verifyResult.status === "invalid") {
         return NextResponse.json(
           { error: "客户端 SESSDATA 已失效，请在“B站 Cookie 配置”更新后重试。" },
           { status: 401 }
         );
+      } else {
+        if (!serverCookies.sessdata?.trim()) {
+          effectiveCookies = clientCookies;
+        }
+        console.warn("[bilibili] 客户端 SESSDATA 校验状态未知，继续按当前可用 cookie 执行:", verifyResult.reason || "unknown");
       }
-      applyCookieSet(clientCookies);
-    } else {
-      applyCookieSet(serverCookies);
     }
+    const withCookies = <T,>(task: () => Promise<T>) => runWithCookieSet(effectiveCookies, task);
 
     // 获取视频列表
     let targetBvids: string[] = [];
@@ -360,7 +333,7 @@ export async function POST(req: Request) {
       let page = 1;
       let hasMore = true;
       while (hasMore) {
-        const result = await getUPownerVideos(mid, page, 50);
+        const result = await withCookies(() => getUPownerVideos(mid, page, 50));
         targetBvids.push(...result.videos.map((v) => v.bvid));
         hasMore = targetBvids.length < result.total;
         page++;
@@ -418,7 +391,7 @@ export async function POST(req: Request) {
             }
 
             // 获取视频信息（带重试 + 匿名兜底）
-            const v = await getVideoInfoWithRetry(bvid, 3);
+            const v = await withCookies(() => getVideoInfoWithRetry(bvid, 3));
             if (!v.cid || v.cid <= 0) {
               throw new Error("视频缺少 CID，无法获取字幕");
             }
@@ -452,7 +425,7 @@ export async function POST(req: Request) {
             });
 
             send("status", { message: `正在获取字幕: ${bvid}` });
-            const subtitle = await getSubtitleWithTranscribeFallback(bvid, v.cid);
+            const subtitle = await withCookies(() => getSubtitleWithTranscribeFallback(bvid, v.cid));
             await prisma.video.update({
               where: { id: video.id },
               data: {
@@ -463,7 +436,7 @@ export async function POST(req: Request) {
             });
 
             send("status", { message: `正在提取知识点: ${bvid}` });
-            const points = await extractKnowledgePoints(v.title, subtitle.text);
+            const points = await extractKnowledgePoints(v.title, subtitle.text, selectedModelId, clientModelConfig);
             const savedCount = await saveKnowledgePoints(video.id, points);
             if (savedCount <= 0) {
               throw new Error("知识提取为空：未写入有效知识点");
@@ -535,8 +508,5 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("UP主分析错误:", error);
     return NextResponse.json({ error: "分析失败" }, { status: 500 });
-  } finally {
-    // 避免请求级 cookie 覆盖污染后续请求
-    applyCookieSet(serverCookies);
   }
 }

@@ -17,6 +17,10 @@ model User {
   emailVerified DateTime?  @map("email_verified_at")  // 邮箱验证时间
   notebooks     Notebook[]
   userVideos    UserVideo[]
+  timestampNotes VideoTimestampNote[]
+  videoTags      VideoTag[]
+  videoTagRelations VideoTagRelation[]
+  chatMessages   ChatMessage[]
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -43,6 +47,8 @@ model Notebook {
   description String?
   coverImage  String?
   tags        String[]
+  mode        String          @default("manual")
+  rule        Json?
   videoCount  Int             @default(0)
   user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   videos      NotebookVideo[]
@@ -71,6 +77,9 @@ model Video {
   notebookVideos      NotebookVideo[]
   knowledgePoints     KnowledgePoint[]
   userVideos          UserVideo[]
+  timestampNotes      VideoTimestampNote[]
+  tagRelations        VideoTagRelation[]
+  chatMessages        ChatMessage[]
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
 
@@ -152,4 +161,71 @@ model UPProfile {
   updatedAt    DateTime  @updatedAt
 
   @@map("up_profiles")
+}
+
+// 视频时间戳笔记
+model VideoTimestampNote {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  videoId      String   @map("video_id")
+  timestampSec Int      @map("timestamp_sec")
+  content      String
+  sourceText   String?  @map("source_text")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video        Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, videoId, timestampSec])
+  @@index([videoId])
+  @@map("video_timestamp_notes")
+}
+
+// 用户自定义视频标签
+model VideoTag {
+  id          String             @id @default(cuid())
+  userId      String             @map("user_id")
+  name        String
+  color       String?
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoTags   VideoTagRelation[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@unique([userId, name])
+  @@index([userId, createdAt])
+  @@map("video_tags")
+}
+
+// 视频标签关联
+model VideoTagRelation {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  videoId   String   @map("video_id")
+  tagId     String   @map("tag_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  tag       VideoTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, videoId, tagId])
+  @@index([userId, tagId])
+  @@index([videoId])
+  @@map("video_tag_relations")
+}
+
+// 视频对话历史
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  videoId   String   @map("video_id")
+  role      String
+  content   String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId, videoId, createdAt])
+  @@index([videoId])
+  @@map("chat_messages")
 }
