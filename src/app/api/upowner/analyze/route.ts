@@ -9,8 +9,8 @@ import {
 } from "@/lib/bilibili";
 import prisma from "@/lib/db";
 import { generateEmbedding, toVectorString } from "@/lib/embedding";
+import { type ClientModelConfig, getLanguageModel } from "@/lib/llm";
 import { KNOWLEDGE_EXTRACTION_PROMPT } from "@/lib/prompts";
-import { getAnalyzeModel, qwen } from "@/lib/qwen";
 import { cleanup, parseSrt, transcribeAudio } from "@/lib/videocaptioner";
 import { acquireTranscribeSlot } from "@/lib/transcribe-guard";
 import {
@@ -216,16 +216,21 @@ function tryParseKnowledgePoints(text: string): ExtractedPoint[] | null {
   }
 }
 
-async function extractKnowledgePoints(title: string, subtitleText: string): Promise<ExtractedPoint[]> {
+async function extractKnowledgePoints(
+  title: string,
+  subtitleText: string,
+  modelId?: string,
+  modelConfig?: ClientModelConfig
+): Promise<ExtractedPoint[]> {
   const { text } = await generateText({
-    model: qwen(getAnalyzeModel()),
+    model: getLanguageModel(modelId, modelConfig),
     prompt: KNOWLEDGE_EXTRACTION_PROMPT(title, subtitleText.slice(0, 24000)),
   });
 
   let points = tryParseKnowledgePoints(text);
   if (!points) {
     const retry = await generateText({
-      model: qwen(getAnalyzeModel()),
+      model: getLanguageModel(modelId, modelConfig),
       prompt:
         `请从以下字幕中提取10个关键知识点，每个包含type(topic/keyPoint/concept/qaPair)、content、timestamp(秒)。\n\n` +
         `视频：${title}\n` +
@@ -287,7 +292,10 @@ async function saveKnowledgePoints(videoId: string, points: ExtractedPoint[]): P
 // UP主批量分析 - SSE 流式进度
 export async function POST(req: Request) {
   try {
-    const { mid, bvids, all } = await req.json();
+    const { mid, bvids, all, modelId, modelConfig } = await req.json();
+    const selectedModelId = typeof modelId === "string" ? modelId : undefined;
+    const clientModelConfig =
+      modelConfig && typeof modelConfig === "object" ? (modelConfig as ClientModelConfig) : undefined;
 
     if (!mid) {
       return NextResponse.json({ error: "缺少 mid 参数" }, { status: 400 });
@@ -428,7 +436,7 @@ export async function POST(req: Request) {
             });
 
             send("status", { message: `正在提取知识点: ${bvid}` });
-            const points = await extractKnowledgePoints(v.title, subtitle.text);
+            const points = await extractKnowledgePoints(v.title, subtitle.text, selectedModelId, clientModelConfig);
             const savedCount = await saveKnowledgePoints(video.id, points);
             if (savedCount <= 0) {
               throw new Error("知识提取为空：未写入有效知识点");

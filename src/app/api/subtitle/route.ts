@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   let releaseSlot: (() => void) | undefined;
 
   try {
-    const { bvid, cid } = await req.json();
+    const { bvid, cid, skipTranscribeFallback } = await req.json();
 
     if (!bvid || !cid) {
       return NextResponse.json(
@@ -88,6 +88,10 @@ export async function POST(req: NextRequest) {
         // 其他错误（网络、超时等）也尝试转写兜底
         console.warn(`[subtitle] CC 字幕获取失败，尝试音频转写: ${message}`);
       }
+    }
+
+    if (skipTranscribeFallback) {
+      return NextResponse.json({ subtitleSource: "none" });
     }
 
     // 音频转写兜底

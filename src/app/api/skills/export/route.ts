@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { generateText } from "ai";
 import prisma from "@/lib/db";
-import { getAnalyzeModel, qwen } from "@/lib/qwen";
+import { type ClientModelConfig, getLanguageModel } from "@/lib/llm";
 import { SKILL_EXPORT_PROMPT } from "@/lib/prompts";
 
 export async function POST(req: Request) {
   try {
-    const { notebookId, format } = await req.json();
+    const { notebookId, format, modelId, modelConfig } = await req.json();
+    const selectedModelId = typeof modelId === "string" ? modelId : undefined;
+    const clientModelConfig =
+      modelConfig && typeof modelConfig === "object" ? (modelConfig as ClientModelConfig) : undefined;
 
     if (!notebookId || !format) {
       return NextResponse.json({ error: "缺少参数" }, { status: 400 });
@@ -44,14 +47,14 @@ export async function POST(req: Request) {
     }
 
     if (format === "skill-folder") {
-      return await exportSkillFolder(notebook, allPoints);
+      return await exportSkillFolder(notebook, allPoints, selectedModelId, clientModelConfig);
     }
 
     if (format === "markdown") {
       return await exportMarkdown(notebook, allPoints);
     }
 
-    return await exportSystemPrompt(notebook, allPoints);
+    return await exportSystemPrompt(notebook, allPoints, selectedModelId, clientModelConfig);
   } catch (error) {
     console.error("导出错误:", error);
     return NextResponse.json({ error: "导出失败" }, { status: 500 });
@@ -79,7 +82,9 @@ async function exportSkillFolder(
     timestamp: number | null;
     videoTitle: string;
     videoBvid: string;
-  }>
+  }>,
+  modelId?: string,
+  modelConfig?: ClientModelConfig
 ) {
   const folderName = notebook.title.replace(/[/\\?%*:|"<>]/g, "-");
 
@@ -96,7 +101,7 @@ async function exportSkillFolder(
     .join("\n");
 
   const { text: instructions } = await generateText({
-    model: qwen(getAnalyzeModel()),
+    model: getLanguageModel(modelId, modelConfig),
     prompt: SKILL_EXPORT_PROMPT(notebook.title, pointsText),
   });
 
@@ -217,14 +222,16 @@ async function exportMarkdown(
 
 async function exportSystemPrompt(
   notebook: { title: string },
-  allPoints: Array<{ type: string; content: string; videoTitle: string }>
+  allPoints: Array<{ type: string; content: string; videoTitle: string }>,
+  modelId?: string,
+  modelConfig?: ClientModelConfig
 ) {
   const pointsText = allPoints
     .map((p) => `[${p.type}] ${p.content} (来源: ${p.videoTitle})`)
     .join("\n");
 
   const { text } = await generateText({
-    model: qwen(getAnalyzeModel()),
+    model: getLanguageModel(modelId, modelConfig),
     prompt: SKILL_EXPORT_PROMPT(notebook.title, pointsText),
   });
 

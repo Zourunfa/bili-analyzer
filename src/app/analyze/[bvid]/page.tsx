@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Layout, Card, Tabs, Input, Button, Spin, Empty, Typography, Space, Tag, Divider, Progress, Modal, Select, message } from "antd";
+import { Layout, Card, Tabs, Input, Button, Spin, Empty, Typography, Space, Tag, Divider, Progress, Modal, Select, Form, message } from "antd";
 import {
   SendOutlined,
   RobotOutlined,
@@ -26,6 +26,7 @@ import {
   FileMarkdownOutlined,
   CopyOutlined,
   ApartmentOutlined,
+  SettingOutlined,
 } from "@ant-design/icons";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -79,11 +80,117 @@ interface TemplateItem {
   description: string;
 }
 
+interface ModelProviderItem {
+  id: string;
+  name: string;
+  models: Array<{
+    id: string;
+    name: string;
+    model: string;
+  }>;
+}
+
+type RuntimeModelKind = "openai-compatible" | "anthropic";
+
+interface RuntimeModelPreset {
+  id: string;
+  name: string;
+  kind: RuntimeModelKind;
+  baseURL?: string;
+  models: string[];
+}
+
+interface RuntimeModelConfig {
+  id: string;
+  providerId: string;
+  providerName: string;
+  kind: RuntimeModelKind;
+  baseURL?: string;
+  model: string;
+  apiKey: string;
+  displayName?: string;
+}
+
 interface TimestampNoteItem {
   id: string;
   timestampSec: number;
   content: string;
 }
+
+const SELECTED_MODEL_STORAGE_KEY = "videonote:selected-model-id";
+const RUNTIME_MODEL_STORAGE_KEY = "videonote:runtime-model-config";
+
+const RUNTIME_MODEL_PRESETS: RuntimeModelPreset[] = [
+  {
+    id: "dashscope",
+    name: "通义千问",
+    kind: "openai-compatible",
+    baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    models: ["qwen-plus", "qwen-turbo", "qwen-max"],
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    kind: "openai-compatible",
+    baseURL: "https://api.deepseek.com",
+    models: ["deepseek-chat", "deepseek-reasoner"],
+  },
+  {
+    id: "minimax",
+    name: "MiniMax",
+    kind: "openai-compatible",
+    baseURL: "https://api.minimax.io/v1",
+    models: ["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-Text-01"],
+  },
+  {
+    id: "openai",
+    name: "OpenAI GPT",
+    kind: "openai-compatible",
+    baseURL: "https://api.openai.com/v1",
+    models: ["gpt-4.1-mini", "gpt-4o-mini"],
+  },
+  {
+    id: "kimi",
+    name: "Kimi",
+    kind: "openai-compatible",
+    baseURL: "https://api.moonshot.cn/v1",
+    models: ["moonshot-v1-8k", "kimi-k2-0711-preview"],
+  },
+  {
+    id: "glm",
+    name: "智谱 GLM",
+    kind: "openai-compatible",
+    baseURL: "https://open.bigmodel.cn/api/paas/v4",
+    models: ["glm-4-flash", "glm-4-plus"],
+  },
+  {
+    id: "xiaomi",
+    name: "小米 MiMo",
+    kind: "openai-compatible",
+    baseURL: "https://api.xiaomimimo.com/v1",
+    models: ["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2.5-flash"],
+  },
+  {
+    id: "anthropic",
+    name: "Anthropic",
+    kind: "anthropic",
+    models: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"],
+  },
+  {
+    id: "custom",
+    name: "自定义 OpenAI 兼容",
+    kind: "openai-compatible",
+    baseURL: "",
+    models: ["custom-model"],
+  },
+];
+
+const TRANSCRIBE_STEPS = [
+  { key: "prepare", label: "准备" },
+  { key: "download", label: "下载音频" },
+  { key: "transcribe", label: "语音转写" },
+  { key: "summary", label: "生成摘要" },
+] as const;
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -210,6 +317,7 @@ export default function AnalyzePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { data: session, status: authStatus } = useSession();
+  const [modelConfigForm] = Form.useForm();
   const bvid = params.bvid as string;
   const cid = searchParams.get("cid");
   const isHistoryMode = bvid === "history";
@@ -219,6 +327,7 @@ export default function AnalyzePage() {
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [subtitleText, setSubtitleText] = useState("");
   const [summary, setSummary] = useState("");
+  const [currentVideoId, setCurrentVideoId] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -229,6 +338,7 @@ export default function AnalyzePage() {
   const [transcribeStep, setTranscribeStep] = useState<string>("");
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadSize, setDownloadSize] = useState("");
+  const [transcribeVisualProgress, setTranscribeVisualProgress] = useState(0);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
   const [notebooks, setNotebooksList] = useState<Array<{ id: string; title: string }>>([]);
   const [selectedNotebook, setSelectedNotebook] = useState<string | null>(null);
@@ -262,6 +372,11 @@ export default function AnalyzePage() {
   const [mindmapCopied, setMindmapCopied] = useState(false);
   const [summaryCopied, setSummaryCopied] = useState(false);
   const [subtitleCopied, setSubtitleCopied] = useState(false);
+  const [modelProviders, setModelProviders] = useState<ModelProviderItem[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState<string>("");
+  const [runtimeModelConfig, setRuntimeModelConfig] = useState<RuntimeModelConfig | null>(null);
+  const [modelConfigModalOpen, setModelConfigModalOpen] = useState(false);
+  const [modelConfigProviderId, setModelConfigProviderId] = useState("minimax");
 
   // 顶部链接输入框
   const [headerUrl, setHeaderUrl] = useState("");
@@ -312,6 +427,177 @@ export default function AnalyzePage() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    const savedRuntime = window.localStorage.getItem(RUNTIME_MODEL_STORAGE_KEY);
+    let parsedRuntime: RuntimeModelConfig | null = null;
+    if (savedRuntime) {
+      try {
+        const parsed = JSON.parse(savedRuntime) as RuntimeModelConfig;
+        if (parsed?.id && parsed?.providerId && parsed?.model && parsed?.apiKey) {
+          parsedRuntime = parsed;
+          setRuntimeModelConfig(parsed);
+          setModelConfigProviderId(parsed.providerId);
+        }
+      } catch {
+        window.localStorage.removeItem(RUNTIME_MODEL_STORAGE_KEY);
+      }
+    }
+
+    fetch("/api/models")
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const providers = Array.isArray(data.providers) ? data.providers : [];
+        setModelProviders(providers);
+        const saved = window.localStorage.getItem(SELECTED_MODEL_STORAGE_KEY);
+        const allModelIds = providers.flatMap((provider: ModelProviderItem) =>
+          provider.models.map((model) => model.id)
+        );
+        if (parsedRuntime && (!saved || saved === parsedRuntime.id)) {
+          setSelectedModelId(parsedRuntime.id);
+          window.localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, parsedRuntime.id);
+          return;
+        }
+
+        const selectableModelIds = parsedRuntime ? [...allModelIds, parsedRuntime.id] : allModelIds;
+        const nextModelId = saved && selectableModelIds.includes(saved)
+          ? saved
+          : String(data.defaultModelId || allModelIds[0] || "");
+        setSelectedModelId(nextModelId);
+      })
+      .catch(() => {
+        setModelProviders([]);
+        if (parsedRuntime) setSelectedModelId(parsedRuntime.id);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleModelChange = (modelId: string) => {
+    setSelectedModelId(modelId);
+    window.localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, modelId);
+  };
+
+  const selectedRuntimeModelConfig =
+    runtimeModelConfig && selectedModelId === runtimeModelConfig.id ? runtimeModelConfig : null;
+
+  const modelRequestConfig = useMemo(
+    () =>
+      selectedRuntimeModelConfig
+        ? {
+            providerId: selectedRuntimeModelConfig.providerId,
+            providerName: selectedRuntimeModelConfig.providerName,
+            kind: selectedRuntimeModelConfig.kind,
+            baseURL: selectedRuntimeModelConfig.baseURL,
+            apiKey: selectedRuntimeModelConfig.apiKey,
+            model: selectedRuntimeModelConfig.model,
+          }
+        : undefined,
+    [selectedRuntimeModelConfig]
+  );
+
+  const selectedModelLabel =
+    selectedRuntimeModelConfig
+      ? selectedRuntimeModelConfig.displayName || `${selectedRuntimeModelConfig.providerName} / ${selectedRuntimeModelConfig.model}`
+      :
+    modelProviders
+      .flatMap((provider) => provider.models.map((model) => ({
+        id: model.id,
+        label: `${provider.name} / ${model.name}`,
+      })))
+      .find((item) => item.id === selectedModelId)?.label || "默认模型";
+
+  const modelSelectOptions = [
+    ...(runtimeModelConfig
+      ? [
+          {
+            label: "我的配置",
+            options: [
+              {
+                value: runtimeModelConfig.id,
+                label: runtimeModelConfig.displayName || `${runtimeModelConfig.providerName} / ${runtimeModelConfig.model}`,
+              },
+            ],
+          },
+        ]
+      : []),
+    ...modelProviders.map((provider) => ({
+      label: provider.name,
+      options: provider.models.map((model) => ({
+        value: model.id,
+        label: model.name,
+      })),
+    })),
+  ];
+
+  const openModelConfigModal = () => {
+    const currentPreset =
+      RUNTIME_MODEL_PRESETS.find((preset) => preset.id === runtimeModelConfig?.providerId) ||
+      RUNTIME_MODEL_PRESETS.find((preset) => preset.id === modelConfigProviderId) ||
+      RUNTIME_MODEL_PRESETS[2];
+    setModelConfigProviderId(currentPreset.id);
+    modelConfigForm.setFieldsValue({
+      providerId: currentPreset.id,
+      displayName: runtimeModelConfig?.displayName || "",
+      model: [runtimeModelConfig?.model || currentPreset.models[0]],
+      baseURL: runtimeModelConfig?.baseURL ?? currentPreset.baseURL ?? "",
+      apiKey: runtimeModelConfig?.apiKey || "",
+    });
+    setModelConfigModalOpen(true);
+  };
+
+  const handleModelConfigProviderChange = (providerId: string) => {
+    const preset = RUNTIME_MODEL_PRESETS.find((item) => item.id === providerId) || RUNTIME_MODEL_PRESETS[0];
+    setModelConfigProviderId(providerId);
+    modelConfigForm.setFieldsValue({
+      providerId,
+      model: [preset.models[0]],
+      baseURL: preset.baseURL || "",
+      displayName: "",
+    });
+  };
+
+  const handleSaveRuntimeModelConfig = async () => {
+    const values = await modelConfigForm.validateFields();
+    const preset = RUNTIME_MODEL_PRESETS.find((item) => item.id === values.providerId) || RUNTIME_MODEL_PRESETS[0];
+    const model = Array.isArray(values.model) ? String(values.model[0] || "").trim() : String(values.model || "").trim();
+    if (!model) {
+      message.warning("请填写模型名");
+      return;
+    }
+    const nextConfig: RuntimeModelConfig = {
+      id: `runtime:${values.providerId}:${model}`,
+      providerId: values.providerId,
+      providerName: preset.name,
+      kind: preset.kind,
+      baseURL: preset.kind === "anthropic" ? String(values.baseURL || "").trim() || undefined : String(values.baseURL || "").trim(),
+      model,
+      apiKey: String(values.apiKey || "").trim(),
+      displayName: String(values.displayName || "").trim() || undefined,
+    };
+    setRuntimeModelConfig(nextConfig);
+    setSelectedModelId(nextConfig.id);
+    window.localStorage.setItem(RUNTIME_MODEL_STORAGE_KEY, JSON.stringify(nextConfig));
+    window.localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, nextConfig.id);
+    setModelConfigModalOpen(false);
+    message.success("模型配置已保存并切换");
+  };
+
+  const handleClearRuntimeModelConfig = () => {
+    setRuntimeModelConfig(null);
+    window.localStorage.removeItem(RUNTIME_MODEL_STORAGE_KEY);
+    if (selectedModelId.startsWith("runtime:")) {
+      const fallback = modelProviders[0]?.models[0]?.id || "";
+      setSelectedModelId(fallback);
+      if (fallback) window.localStorage.setItem(SELECTED_MODEL_STORAGE_KEY, fallback);
+      else window.localStorage.removeItem(SELECTED_MODEL_STORAGE_KEY);
+    }
+    setModelConfigModalOpen(false);
+    message.success("已清除本地模型配置");
+  };
+
+  useEffect(() => {
     if (isMobile) {
       setMobilePanelOpen(false);
       setMobileVideoMetaOpen(false);
@@ -324,6 +610,44 @@ export default function AnalyzePage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (!transcribing) {
+      if (!summaryLoading) setTranscribeVisualProgress(0);
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setTranscribeVisualProgress((prev) => {
+        const step = transcribeStep || "";
+        let target = prev + 1;
+
+        if (step.includes("队列") || step.includes("资源")) {
+          target = Math.max(prev, 8);
+        } else if (step.includes("下载")) {
+          const mappedDownload = downloadProgress > 0 ? 10 + downloadProgress * 0.38 : prev + 2;
+          target = Math.min(50, Math.max(prev, mappedDownload));
+        } else if (step.includes("转写")) {
+          target = Math.min(88, prev + (prev < 64 ? 3 : 1));
+        } else if (step.includes("摘要") || step.includes("完成")) {
+          target = Math.min(96, Math.max(prev + 2, 92));
+        } else {
+          target = Math.min(35, prev + 2);
+        }
+
+        return Math.round(Math.min(96, target));
+      });
+    }, 700);
+
+    return () => window.clearInterval(timer);
+  }, [downloadProgress, summaryLoading, transcribeStep, transcribing]);
+
+  const transcribeActiveStep = useMemo(() => {
+    if (transcribeStep.includes("下载")) return "download";
+    if (transcribeStep.includes("转写")) return "transcribe";
+    if (transcribeStep.includes("摘要") || transcribeStep.includes("完成")) return "summary";
+    return "prepare";
+  }, [transcribeStep]);
 
   // 刷新历史视频列表
   const refreshHistory = useCallback(() => {
@@ -341,6 +665,31 @@ export default function AnalyzePage() {
       .catch(() => {
         setHistoryVideos([]);
       });
+  }, []);
+
+  const loadChatHistory = useCallback(async (videoId: string) => {
+    try {
+      const res = await fetch(`/api/videos/${videoId}/chat`);
+      if (!res.ok) {
+        setMessages([]);
+        return;
+      }
+      const data = await res.json();
+      const history = Array.isArray(data.messages)
+        ? data.messages
+            .filter((item: { role?: string; content?: unknown }) =>
+              (item.role === "user" || item.role === "assistant") &&
+              typeof item.content === "string"
+            )
+            .map((item: { role: "user" | "assistant"; content: string }) => ({
+              role: item.role,
+              content: item.content,
+            }))
+        : [];
+      setMessages(history);
+    } catch {
+      setMessages([]);
+    }
   }, []);
 
   // 切换到历史 Tab 时加载视频列表
@@ -386,7 +735,9 @@ export default function AnalyzePage() {
     videoInfoRef.current = info;
     setSubtitleText(video.subtitleText || "");
     setSummary(video.summary || "");
+    setCurrentVideoId(video.id);
     setMessages([]);
+    loadChatHistory(video.id);
     setSidebarTab("subtitle");
     router.replace(`/analyze/${video.bvid}`);
   };
@@ -423,7 +774,15 @@ export default function AnalyzePage() {
       if (res.ok && sidebarTab === "history") {
         refreshHistory();
       }
+      if (res.ok) {
+        const data = await res.json();
+        if (data.video?.id) {
+          setCurrentVideoId(data.video.id);
+          return data.video.id as string;
+        }
+      }
     } catch { /* 静默 */ }
+    return null;
   };
 
   // 生成 AI 摘要（流式），返回最终的摘要文本
@@ -434,7 +793,11 @@ export default function AnalyzePage() {
       const sumRes = await fetch("/api/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subtitleText: text }),
+        body: JSON.stringify({
+          subtitleText: text,
+          modelId: selectedRuntimeModelConfig ? undefined : selectedModelId || undefined,
+          modelConfig: modelRequestConfig,
+        }),
       });
       if (!sumRes.ok) {
         setError("生成摘要失败");
@@ -477,6 +840,8 @@ export default function AnalyzePage() {
     if (!bvid || isHistoryMode) return;
 
     let cancelled = false;
+    setCurrentVideoId(null);
+    setMessages([]);
 
     (async () => {
       // 先查数据库，看是否已有完整的分析数据
@@ -487,6 +852,7 @@ export default function AnalyzePage() {
           if (dbData.video && dbData.video.subtitleText) {
             // 数据库有完整数据，直接使用
             const v = dbData.video;
+            setCurrentVideoId(v.id);
             setVideoInfo({
               title: v.title,
               pic: v.pic || "",
@@ -505,6 +871,7 @@ export default function AnalyzePage() {
             if (v.summary) {
               setSummary(v.summary);
             }
+            await loadChatHistory(v.id);
             // 如果没有摘要但有字幕，触发摘要生成
             if (!v.summary && v.subtitleText) {
               const summaryText = await generateSummary(v.subtitleText);
@@ -552,18 +919,28 @@ export default function AnalyzePage() {
         if (!cid) return;
 
         try {
+          setSummaryLoading(true);
+          setTranscribing(true);
+          setTranscribeStep("正在检查是否存在 CC 字幕...");
+          setTranscribeVisualProgress(4);
+          setDownloadProgress(0);
+          setDownloadSize("");
+
           const subRes = await fetch("/api/subtitle", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ bvid, cid: Number(cid) }),
+            body: JSON.stringify({ bvid, cid: Number(cid), skipTranscribeFallback: true }),
           });
           const subData = await subRes.json();
           if (subData.error) {
             setError(subData.error);
+            setTranscribing(false);
+            setSummaryLoading(false);
             return;
           }
 
           if (subData.subtitleSource === "cc") {
+            setTranscribing(false);
             setSubtitleText(subData.text);
             const summaryText = await generateSummary(subData.text);
             autoSaveVideo(videoInfoRef.current!, subData.text, "cc", summaryText);
@@ -571,6 +948,7 @@ export default function AnalyzePage() {
           }
 
           if (subData.subtitleSource === "transcribed") {
+            setTranscribing(false);
             setSubtitleText(subData.text);
             const summaryText = await generateSummary(subData.text);
             autoSaveVideo(videoInfoRef.current!, subData.text, "transcribed", summaryText);
@@ -578,11 +956,8 @@ export default function AnalyzePage() {
           }
 
           if (subData.subtitleSource === "none") {
-            setTranscribing(true);
             setTranscribeStep("正在下载音频...");
-            setDownloadProgress(0);
-            setDownloadSize("");
-            setSummaryLoading(true);
+            setTranscribeVisualProgress(10);
 
             const transRes = await fetch("/api/transcribe", {
               method: "POST",
@@ -621,6 +996,7 @@ export default function AnalyzePage() {
                     } else if (event.type === "done") {
                       const transData = event.data;
                       setTranscribeStep("转写完成，正在生成摘要...");
+                      setTranscribeVisualProgress(96);
                       setSubtitleText(transData.text);
                       setTranscribing(false);
                       const summaryText = await generateSummary(transData.text);
@@ -641,6 +1017,7 @@ export default function AnalyzePage() {
         setTranscribing(true);
         setTranscribeStep("正在从视频下载音频...");
         setDownloadProgress(0);
+        setTranscribeVisualProgress(4);
         setDownloadSize("");
         setSummaryLoading(true);
 
@@ -681,6 +1058,7 @@ export default function AnalyzePage() {
                 } else if (event.type === "done") {
                   const transData = event.data;
                   setTranscribeStep("转写完成，正在生成摘要...");
+                  setTranscribeVisualProgress(96);
                   setSubtitleText(transData.text);
                   setTranscribing(false);
                   const summaryText = await generateSummary(transData.text);
@@ -729,6 +1107,9 @@ export default function AnalyzePage() {
               content: m.content,
             })),
             subtitleText,
+            videoId: currentVideoId,
+            modelId: selectedRuntimeModelConfig ? undefined : selectedModelId || undefined,
+            modelConfig: modelRequestConfig,
           }),
         });
 
@@ -784,23 +1165,8 @@ export default function AnalyzePage() {
         setChatLoading(false);
       }
     },
-    [chatInput, chatLoading, messages, subtitleText]
+    [chatInput, chatLoading, currentVideoId, messages, modelRequestConfig, selectedModelId, selectedRuntimeModelConfig, subtitleText]
   );
-
-  if (error) {
-    return (
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh" }}>
-        <Card style={{ maxWidth: 480 }}>
-          <Text type="danger">{error}</Text>
-          <div style={{ marginTop: 16 }}>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => (window.location.href = "/")}>
-              返回首页
-            </Button>
-          </div>
-        </Card>
-      </div>
-    );
-  }
 
   const quickQuestions = [
     "视频的核心观点是什么？",
@@ -875,6 +1241,9 @@ export default function AnalyzePage() {
         }),
       });
       const videoData = await videoRes.json();
+      if (videoData.video?.id) {
+        setCurrentVideoId(videoData.video.id);
+      }
 
       // 关联到笔记本
       await fetch(`/api/notebooks/${selectedNotebook}/videos`, {
@@ -891,7 +1260,11 @@ export default function AnalyzePage() {
       fetch("/api/knowledge/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bvid }),
+        body: JSON.stringify({
+          bvid,
+          modelId: selectedRuntimeModelConfig ? undefined : selectedModelId || undefined,
+          modelConfig: modelRequestConfig,
+        }),
       }).catch(() => { /* 后台处理，不阻塞 */ });
     } catch {
       message.error("保存失败");
@@ -1115,6 +1488,8 @@ export default function AnalyzePage() {
           summary,
           subtitleText,
           extraPrompt: templateExtraPrompt,
+          modelId: selectedRuntimeModelConfig ? undefined : selectedModelId || undefined,
+          modelConfig: modelRequestConfig,
         }),
       });
 
@@ -1444,6 +1819,22 @@ export default function AnalyzePage() {
     />
   );
 
+  // 错误兜底渲染：必须放在所有 hook 之后，避免 Rules of Hooks 违例
+  if (error) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh" }}>
+        <Card style={{ maxWidth: 480 }}>
+          <Text type="danger">{error}</Text>
+          <div style={{ marginTop: 16 }}>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => (window.location.href = "/")}>
+              返回首页
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <Layout style={{ height: "calc(100vh - 56px)", minHeight: 0 }}>
       {/* Header */}
@@ -1490,6 +1881,24 @@ export default function AnalyzePage() {
           </Button>
         </Space.Compact>
         <div className="header-actions">
+        <Select
+          size="small"
+          value={selectedModelId || undefined}
+          onChange={handleModelChange}
+          placeholder="模型"
+          title={selectedModelLabel}
+          style={{ width: 180 }}
+          popupMatchSelectWidth={260}
+          options={modelSelectOptions}
+          disabled={modelSelectOptions.length === 0}
+        />
+        <Button
+          icon={<SettingOutlined />}
+          onClick={openModelConfigModal}
+          style={{ borderColor: "var(--border)", color: "azure" }}
+        >
+          配置模型
+        </Button>
         <Button
           icon={<TagsOutlined />}
           onClick={handleOpenTagModal}
@@ -1620,20 +2029,59 @@ export default function AnalyzePage() {
                         style={{ paddingTop: 80 }}
                       />
                     ) : summaryLoading && !summary ? (
-                      <div style={{ textAlign: "center", padding: 48 }}>
-                        <Spin indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} />
-                        <div style={{ marginTop: 12, color: "var(--muted-foreground)" }}>
-                          {transcribing ? transcribeStep : "正在生成摘要..."}
-                        </div>
-                        {transcribing && downloadProgress > 0 && (
-                          <div style={{ maxWidth: 320, margin: "16px auto 0" }}>
-                            <Progress percent={downloadProgress} size="small" />
+                      transcribing ? (
+                        <div className="transcribe-progress-wrap">
+                          <div className="transcribe-progress-card">
+                            <div className="transcribe-orbit" aria-hidden="true">
+                              <div className="transcribe-orbit-core">
+                                <LoadingOutlined spin />
+                              </div>
+                            </div>
+                            <div className="transcribe-progress-title">正在处理语音内容</div>
+                            <div className="transcribe-progress-subtitle">
+                              {transcribeStep || "正在准备转写任务..."}
+                            </div>
+                            <div className="transcribe-wave" aria-hidden="true">
+                              {Array.from({ length: 22 }).map((_, index) => (
+                                <span key={index} style={{ animationDelay: `${index * 0.06}s` }} />
+                              ))}
+                            </div>
+                            <Progress
+                              percent={Math.max(4, transcribeVisualProgress)}
+                              strokeColor={{ "0%": "#fb7299", "55%": "#8b5cf6", "100%": "#22d3ee" }}
+                              trailColor="rgba(148, 163, 184, 0.18)"
+                              size="small"
+                              status="active"
+                            />
                             {downloadSize && (
-                              <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 4 }}>{downloadSize}</div>
+                              <div className="transcribe-download-size">{downloadSize}</div>
                             )}
+                            <div className="transcribe-step-row">
+                              {TRANSCRIBE_STEPS.map((step, index) => {
+                                const activeIndex = TRANSCRIBE_STEPS.findIndex((item) => item.key === transcribeActiveStep);
+                                const isDone = index < activeIndex;
+                                const isActive = step.key === transcribeActiveStep;
+                                return (
+                                  <div
+                                    key={step.key}
+                                    className={`transcribe-step ${isDone ? "done" : ""} ${isActive ? "active" : ""}`}
+                                  >
+                                    <span>{index + 1}</span>
+                                    {step.label}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: "center", padding: 48 }}>
+                          <Spin indicator={<LoadingOutlined style={{ fontSize: 24 }} spin />} />
+                          <div style={{ marginTop: 12, color: "var(--muted-foreground)" }}>
+                            正在生成摘要...
+                          </div>
+                        </div>
+                      )
                     ) : (
                       <>
                         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
@@ -1841,6 +2289,102 @@ export default function AnalyzePage() {
           />
         </Content>
       </Layout>
+
+      <Modal
+        title={<span><SettingOutlined /> 配置模型</span>}
+        open={modelConfigModalOpen}
+        onCancel={() => setModelConfigModalOpen(false)}
+        onOk={handleSaveRuntimeModelConfig}
+        okText="保存并使用"
+        cancelText="取消"
+        width={560}
+        footer={(_, { OkBtn, CancelBtn }) => (
+          <Space style={{ width: "100%", justifyContent: "space-between" }}>
+            <Button danger onClick={handleClearRuntimeModelConfig} disabled={!runtimeModelConfig}>
+              清除配置
+            </Button>
+            <Space>
+              <CancelBtn />
+              <OkBtn />
+            </Space>
+          </Space>
+        )}
+      >
+        <Form
+          form={modelConfigForm}
+          layout="vertical"
+          requiredMark={false}
+          initialValues={{
+            providerId: "minimax",
+            model: ["MiniMax-M2.7"],
+            baseURL: "https://api.minimax.io/v1",
+          }}
+        >
+          <Form.Item
+            label="供应商"
+            name="providerId"
+            rules={[{ required: true, message: "请选择供应商" }]}
+          >
+            <Select
+              options={RUNTIME_MODEL_PRESETS.map((preset) => ({
+                value: preset.id,
+                label: preset.name,
+              }))}
+              onChange={handleModelConfigProviderChange}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="模型"
+            name="model"
+            rules={[{ required: true, message: "请选择或输入模型名" }]}
+          >
+            <Select
+              showSearch
+              mode="tags"
+              placeholder="选择或输入模型名"
+              onChange={(value) => {
+                if (Array.isArray(value) && value.length > 1) {
+                  modelConfigForm.setFieldValue("model", [value[value.length - 1]]);
+                }
+              }}
+              options={(RUNTIME_MODEL_PRESETS.find((preset) => preset.id === modelConfigProviderId)?.models || []).map((model) => ({
+                value: model,
+                label: model,
+              }))}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="API Key"
+            name="apiKey"
+            rules={[{ required: true, message: "请输入 API Key" }]}
+          >
+            <Input.Password placeholder="填写该模型供应商的 API Key" autoComplete="off" />
+          </Form.Item>
+
+          {RUNTIME_MODEL_PRESETS.find((preset) => preset.id === modelConfigProviderId)?.kind !== "anthropic" && (
+            <Form.Item
+              label="Base URL"
+              name="baseURL"
+              rules={[
+                { required: true, message: "请输入 Base URL" },
+                { type: "url", message: "请输入有效的 http(s) 地址" },
+              ]}
+            >
+              <Input placeholder="https://api.example.com/v1" />
+            </Form.Item>
+          )}
+
+          <Form.Item label="显示名称" name="displayName">
+            <Input placeholder="可选，例如：我的 MiniMax" />
+          </Form.Item>
+
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            API Key 只保存在当前浏览器 localStorage，并在生成摘要、对话、知识提取等请求中发送给本应用后端用于本次调用。
+          </Text>
+        </Form>
+      </Modal>
 
       {/* 保存到笔记本弹窗 */}
       <Modal
@@ -2223,6 +2767,145 @@ export default function AnalyzePage() {
           flex-shrink: 0;
           display: flex;
           gap: 12px;
+        }
+        .transcribe-progress-wrap {
+          min-height: 420px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 32px 12px;
+        }
+        .transcribe-progress-card {
+          width: min(560px, 100%);
+          border: 1px solid rgba(251, 114, 153, 0.26);
+          background:
+            radial-gradient(circle at 50% 0%, rgba(251, 114, 153, 0.18), transparent 42%),
+            linear-gradient(180deg, rgba(24, 24, 54, 0.96), rgba(12, 12, 28, 0.96));
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.34);
+          border-radius: 18px;
+          padding: 30px;
+          text-align: center;
+          overflow: hidden;
+          position: relative;
+        }
+        .transcribe-progress-card::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+          transform: translateX(-100%);
+          animation: transcribeShimmer 2.8s ease-in-out infinite;
+        }
+        .transcribe-orbit {
+          width: 86px;
+          height: 86px;
+          margin: 0 auto 18px;
+          border-radius: 50%;
+          padding: 2px;
+          background: conic-gradient(from 0deg, #fb7299, #8b5cf6, #22d3ee, #fb7299);
+          animation: transcribeRotate 2.8s linear infinite;
+          position: relative;
+        }
+        .transcribe-orbit-core {
+          width: 100%;
+          height: 100%;
+          border-radius: 50%;
+          background: #111127;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #fb7299;
+          font-size: 28px;
+        }
+        .transcribe-progress-title {
+          color: var(--foreground);
+          font-size: 20px;
+          font-weight: 700;
+          line-height: 1.3;
+          position: relative;
+        }
+        .transcribe-progress-subtitle {
+          margin-top: 8px;
+          color: var(--muted-foreground);
+          font-size: 14px;
+          min-height: 22px;
+          position: relative;
+        }
+        .transcribe-wave {
+          height: 68px;
+          margin: 24px auto 18px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          position: relative;
+        }
+        .transcribe-wave span {
+          width: 5px;
+          height: 18px;
+          border-radius: 99px;
+          background: linear-gradient(180deg, #22d3ee, #8b5cf6 48%, #fb7299);
+          opacity: 0.82;
+          animation: transcribeWave 1.1s ease-in-out infinite;
+        }
+        .transcribe-download-size {
+          margin-top: 8px;
+          color: var(--muted-foreground);
+          font-size: 12px;
+        }
+        .transcribe-step-row {
+          margin-top: 22px;
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+          position: relative;
+        }
+        .transcribe-step {
+          min-width: 0;
+          border: 1px solid rgba(148, 163, 184, 0.2);
+          background: rgba(255, 255, 255, 0.04);
+          color: var(--muted-foreground);
+          border-radius: 10px;
+          padding: 8px 6px;
+          font-size: 12px;
+          line-height: 1.2;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+        }
+        .transcribe-step span {
+          width: 18px;
+          height: 18px;
+          border-radius: 50%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(148, 163, 184, 0.14);
+          font-size: 11px;
+          flex: 0 0 auto;
+        }
+        .transcribe-step.done {
+          color: #8ee6c9;
+          border-color: rgba(52, 211, 153, 0.36);
+          background: rgba(52, 211, 153, 0.08);
+        }
+        .transcribe-step.active {
+          color: #fff;
+          border-color: rgba(251, 114, 153, 0.56);
+          background: rgba(251, 114, 153, 0.14);
+          box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.08);
+        }
+        @keyframes transcribeRotate {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes transcribeWave {
+          0%, 100% { height: 16px; opacity: 0.55; }
+          50% { height: 58px; opacity: 1; }
+        }
+        @keyframes transcribeShimmer {
+          0% { transform: translateX(-100%); }
+          55%, 100% { transform: translateX(100%); }
         }
         .video-cover-placeholder {
           width: 100%;

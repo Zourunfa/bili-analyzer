@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { streamText } from "ai";
 import { authOptions } from "@/lib/auth";
-import { getAnalyzeModel, qwen } from "@/lib/qwen";
+import { type ClientModelConfig, getLanguageModel } from "@/lib/llm";
 import { getTemplatePresetById } from "@/lib/template-presets";
 
 export async function POST(req: Request) {
@@ -18,6 +18,11 @@ export async function POST(req: Request) {
     const summary = String(body?.summary || "").trim();
     const subtitleText = String(body?.subtitleText || "").trim();
     const extraPrompt = String(body?.extraPrompt || "").trim();
+    const modelId = typeof body?.modelId === "string" ? body.modelId : undefined;
+    const clientModelConfig =
+      body?.modelConfig && typeof body.modelConfig === "object"
+        ? (body.modelConfig as ClientModelConfig)
+        : undefined;
 
     if (!templateId) {
       return NextResponse.json({ error: "缺少 templateId" }, { status: 400 });
@@ -32,7 +37,7 @@ export async function POST(req: Request) {
     }
 
     const result = streamText({
-      model: qwen(getAnalyzeModel()),
+      model: getLanguageModel(modelId, clientModelConfig),
       system:
         "你是资深内容编辑，请严格遵循模板要求生成可直接使用的结构化内容。输出必须是中文，结构清晰，避免空泛语句。",
       messages: [
@@ -89,4 +94,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "模板生成失败" }, { status: 500 });
   }
 }
-

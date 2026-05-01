@@ -20,6 +20,7 @@ model User {
   timestampNotes VideoTimestampNote[]
   videoTags      VideoTag[]
   videoTagRelations VideoTagRelation[]
+  chatMessages   ChatMessage[]
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -78,6 +79,7 @@ model Video {
   userVideos          UserVideo[]
   timestampNotes      VideoTimestampNote[]
   tagRelations        VideoTagRelation[]
+  chatMessages        ChatMessage[]
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
 
@@ -210,4 +212,20 @@ model VideoTagRelation {
   @@index([userId, tagId])
   @@index([videoId])
   @@map("video_tag_relations")
+}
+
+// 视频对话历史
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  videoId   String   @map("video_id")
+  role      String
+  content   String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId, videoId, createdAt])
+  @@index([videoId])
+  @@map("chat_messages")
 }
