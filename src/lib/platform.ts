@@ -29,6 +29,16 @@ export interface PlatformVideoInfo {
   };
   /** B站专用：CID（分P） */
   cid?: number;
+  /** B站专用：用户链接中指定的分 P 页码 */
+  page?: number;
+  /** B站专用：分 P 列表 */
+  pages?: Array<{
+    bvid?: string;
+    cid: number;
+    page: number;
+    part: string;
+    duration: number;
+  }>;
   /** 抖音/小红书视频直链（用于音频转写），B站为 undefined */
   videoUrl?: string;
 }
@@ -36,6 +46,7 @@ export interface PlatformVideoInfo {
 export interface ParsedVideoId {
   platform: Platform;
   id: string;
+  page?: number;
 }
 
 // ─── URL Pattern Detection ───────────────────────────────────────────────────
@@ -46,6 +57,19 @@ export interface ParsedVideoId {
 function extractUrl(input: string): string {
   const match = input.match(/https?:\/\/[^\s\]】]+/);
   return match ? match[0] : input.trim();
+}
+
+function extractBilibiliPage(urlOrText: string): number | undefined {
+  const rawUrl = extractUrl(urlOrText);
+  try {
+    const parsed = new URL(rawUrl);
+    const page = Number(parsed.searchParams.get("p") || parsed.searchParams.get("page") || "");
+    return Number.isInteger(page) && page > 0 ? page : undefined;
+  } catch {
+    const match = rawUrl.match(/[?&](?:p|page)=(\d+)/);
+    const page = Number(match?.[1] || "");
+    return Number.isInteger(page) && page > 0 ? page : undefined;
+  }
 }
 
 export function detectPlatform(urlOrText: string): Platform | null {
@@ -108,7 +132,7 @@ export async function extractVideoId(
 
   // 默认按 B站 处理（extractBvId 已内置 b23.tv 短链接解析）
   const bvid = await extractBvId(url);
-  if (bvid) return { platform: "bilibili", id: bvid };
+  if (bvid) return { platform: "bilibili", id: bvid, page: extractBilibiliPage(urlOrText) };
 
   // B站解析失败，尝试抖音（纯数字 ID）
   if (/^\d{15,20}$/.test(url.trim())) {
@@ -147,6 +171,11 @@ export async function getVideoMetadata(
 
   // B站
   const info = await getVideoInfo(parsed.id);
+  const pages = info.pages || [];
+  const selectedPage = parsed.page
+    ? pages.find((page) => page.page === parsed.page)
+    : undefined;
+  const currentPage = selectedPage || pages.find((page) => page.bvid === info.bvid);
   return {
     platform: "bilibili",
     id: info.bvid,
@@ -159,6 +188,8 @@ export async function getVideoMetadata(
       avatar: info.owner?.face,
       mid: String(info.aid), // aid 近似 mid 用途
     },
-    cid: info.cid,
+    cid: currentPage?.cid || info.cid,
+    page: currentPage?.page || parsed.page,
+    pages,
   };
 }

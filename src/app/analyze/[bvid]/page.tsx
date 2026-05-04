@@ -37,6 +37,20 @@ import MindMapView from "@/components/MindMapView";
 const { Header, Sider, Content } = Layout;
 const { Title, Text } = Typography;
 
+function getDisplayImageUrl(url?: string | null): string {
+  if (!url) return "";
+  const normalized = url.startsWith("//") ? `https:${url}` : url.replace(/^http:\/\//, "https://");
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.hostname.endsWith("hdslb.com") || parsed.hostname.endsWith("biliimg.com")) {
+      return `/api/image-proxy?url=${encodeURIComponent(normalized)}`;
+    }
+  } catch {
+    return normalized;
+  }
+  return normalized;
+}
+
 interface VideoInfo {
   // 多平台通用
   title: string;
@@ -49,6 +63,9 @@ interface VideoInfo {
   pic?: string;
   owner?: { name: string };
   desc?: string;
+  cid?: number;
+  page?: number;
+  pages?: Array<{ bvid?: string; cid: number; page: number; part: string; duration: number }>;
 }
 
 interface Message {
@@ -64,8 +81,15 @@ interface HistoryVideo {
   ownerName: string;
   duration: number;
   subtitleText: string;
+  subtitleSource?: string;
   summary: string | null;
   createdAt: string;
+}
+
+interface NotebookVideoItem {
+  id: string;
+  order: number;
+  video: HistoryVideo;
 }
 
 interface VideoTagItem {
@@ -89,6 +113,16 @@ interface ModelProviderItem {
     model: string;
   }>;
 }
+
+type VideoInfoResponse = {
+  platform: "bilibili" | "douyin" | "xiaohongshu";
+  id: string;
+  title?: string;
+  cid?: number;
+  page?: number;
+  pages?: Array<{ bvid?: string; cid: number; page: number; part: string; duration: number }>;
+  error?: string;
+};
 
 type RuntimeModelKind = "openai-compatible" | "anthropic";
 
@@ -322,7 +356,14 @@ export default function AnalyzePage() {
   const cid = searchParams.get("cid");
   const isHistoryMode = bvid === "history";
   const platform = (searchParams.get("platform") || "bilibili") as "bilibili" | "douyin" | "xiaohongshu";
+  const chapterQueue = searchParams.get("chapterQueue");
+  const notebookIdFromQueue = searchParams.get("notebookId");
+  const activeNotebookId = searchParams.get("notebookId");
+  const chapterPage = Number(searchParams.get("chapterPage") || "0");
+  const isChapterQueue = platform === "bilibili" && chapterQueue === "all" && !!notebookIdFromQueue && chapterPage > 0;
+  const storageBvid = isChapterQueue ? `${bvid}_p${chapterPage}` : bvid;
   const isMultiPlatform = platform !== "bilibili";
+  const isNotebookMode = !!activeNotebookId;
 
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [subtitleText, setSubtitleText] = useState("");
@@ -382,6 +423,72 @@ export default function AnalyzePage() {
   const [headerUrl, setHeaderUrl] = useState("");
   const [headerLoading, setHeaderLoading] = useState(false);
 
+  const buildAnalyzeUrl = (data: VideoInfoResponse) => {
+    const params = new URLSearchParams();
+    params.set("platform", data.platform);
+    if (data.platform === "bilibili" && data.cid) params.set("cid", String(data.cid));
+    return `/analyze/${data.id}?${params.toString()}`;
+  };
+
+  const analyzeAllChapters = async (data: VideoInfoResponse) => {
+    const pages = data.pages || [];
+    const firstPage = pages[0];
+    if (!firstPage) {
+      router.push(buildAnalyzeUrl(data));
+      return;
+    }
+
+    const hide = message.loading("正在创建章节笔记本...", 0);
+    try {
+      const notebookRes = await fetch("/api/notebooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `${data.title || data.id} 章节合集`,
+          description: `自动保存 ${data.id} 的 ${pages.length} 个章节解析结果`,
+          tags: ["章节合集"],
+          mode: "manual",
+        }),
+      });
+      const notebookData = await notebookRes.json();
+      if (!notebookRes.ok || !notebookData.notebook?.id) {
+        throw new Error(notebookData.error || "章节笔记本创建失败");
+      }
+
+      hide();
+      message.success("章节合集笔记本已创建，开始按顺序解析");
+      const params = new URLSearchParams();
+      params.set("platform", "bilibili");
+      params.set("cid", String(firstPage.cid));
+      params.set("chapterQueue", "all");
+      params.set("chapterPage", String(firstPage.page));
+      params.set("notebookId", notebookData.notebook.id);
+      router.push(`/analyze/${firstPage.bvid || data.id}?${params.toString()}`);
+    } catch (err) {
+      hide();
+      message.error(err instanceof Error ? err.message : "章节队列启动失败");
+    }
+  };
+
+  const continueWithVideoInfo = (data: VideoInfoResponse) => {
+    const isMultipart = data.platform === "bilibili" && (data.pages?.length || 0) > 1;
+    if (!isMultipart) {
+      router.push(buildAnalyzeUrl(data));
+      return;
+    }
+
+    const currentPage = data.page || data.pages?.find((page) => page.cid === data.cid)?.page || 1;
+    Modal.confirm({
+      title: "检测到这是一个章节/分P视频",
+      content: `当前链接指向第 ${currentPage} 个视频。选择全部解析时，会自动创建一个章节合集笔记本，并按顺序逐个解析保存。`,
+      okText: "创建笔记本并解析全部",
+      cancelText: "只解析当前视频",
+      centered: true,
+      onOk: () => analyzeAllChapters(data),
+      onCancel: () => router.push(buildAnalyzeUrl(data)),
+    });
+  };
+
   const handleHeaderSubmit = async () => {
     if (!headerUrl.trim() || headerLoading) return;
     setHeaderLoading(true);
@@ -397,11 +504,7 @@ export default function AnalyzePage() {
         setHeaderLoading(false);
         return;
       }
-      const analyzeId = data.platform === "bilibili" ? data.id : data.id;
-      const params = new URLSearchParams();
-      params.set("platform", data.platform);
-      if (data.platform === "bilibili" && data.cid) params.set("cid", String(data.cid));
-      router.push(`/analyze/${analyzeId}?${params.toString()}`);
+      continueWithVideoInfo(data);
     } catch {
       message.error("网络错误，请重试");
     } finally {
@@ -410,14 +513,17 @@ export default function AnalyzePage() {
   };
 
   // 侧边栏历史视频
-  const [sidebarTab, setSidebarTab] = useState<"subtitle" | "history">(isHistoryMode || isMultiPlatform ? "history" : "subtitle");
+  const [sidebarTab, setSidebarTab] = useState<"subtitle" | "history">(isHistoryMode || isMultiPlatform || isNotebookMode ? "history" : "subtitle");
   const [historyVideos, setHistoryVideos] = useState<HistoryVideo[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyKeyword, setHistoryKeyword] = useState("");
+  const [activeNotebookTitle, setActiveNotebookTitle] = useState("");
   const currentUserId = (session?.user as { id?: string } | undefined)?.id || "";
 
   const videoInfoRef = useRef<VideoInfo | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chapterQueueAdvanceRef = useRef<string | null>(null);
+  const notebookResumePromptRef = useRef<string | null>(null);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth <= 900);
@@ -692,9 +798,100 @@ export default function AnalyzePage() {
     }
   }, []);
 
+  const maybePromptResumeChapterQueue = useCallback(async (
+    notebookId: string,
+    notebookTitle: string,
+    videos: HistoryVideo[]
+  ) => {
+    if (chapterQueue === "all" || notebookResumePromptRef.current === notebookId) return;
+
+    const chapterVideos = videos
+      .map((video) => {
+        const match = video.bvid.match(/^(BV[0-9A-Za-z]+)_p(\d+)$/);
+        return match ? { baseBvid: match[1], page: Number(match[2]), video } : null;
+      })
+      .filter((item): item is { baseBvid: string; page: number; video: HistoryVideo } => !!item);
+
+    if (chapterVideos.length === 0) return;
+
+    const baseBvid = chapterVideos[0].baseBvid;
+    if (!chapterVideos.every((item) => item.baseBvid === baseBvid)) return;
+
+    notebookResumePromptRef.current = notebookId;
+
+    try {
+      const res = await fetch("/api/video-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: baseBvid }),
+      });
+      if (!res.ok) return;
+      const data = await res.json() as VideoInfoResponse;
+      const pages = data.pages || [];
+      if (data.platform !== "bilibili" || pages.length <= chapterVideos.length) return;
+
+      const completedPages = new Set(chapterVideos.map((item) => item.page));
+      const firstMissing = pages.find((page) => !completedPages.has(page.page));
+      if (!firstMissing) return;
+
+      Modal.confirm({
+        title: "检测到章节合集未解析完成",
+        content: `${notebookTitle || "当前合集"} 已完成 ${completedPages.size}/${pages.length} 个章节。是否从 P${firstMissing.page} 继续解析未完成章节？`,
+        okText: "继续解析",
+        cancelText: "暂不解析",
+        centered: true,
+        onOk: () => {
+          const params = new URLSearchParams();
+          params.set("platform", "bilibili");
+          params.set("cid", String(firstMissing.cid));
+          params.set("chapterQueue", "all");
+          params.set("chapterPage", String(firstMissing.page));
+          params.set("notebookId", notebookId);
+          router.push(`/analyze/${firstMissing.bvid || baseBvid}?${params.toString()}`);
+        },
+      });
+    } catch {
+      // 恢复提示失败不影响用户查看已有合集内容
+    }
+  }, [chapterQueue, router]);
+
+  const loadNotebookVideos = useCallback(async (notebookId: string, shouldSelectFirst: boolean) => {
+    setHistoryLoading(true);
+    try {
+      const res = await fetch(`/api/notebooks/${notebookId}`);
+      if (!res.ok) {
+        setHistoryVideos([]);
+        setActiveNotebookTitle("");
+        return;
+      }
+      const data = await res.json();
+      const notebook = data.notebook as { title?: string; videos?: NotebookVideoItem[] } | undefined;
+      const videos = Array.isArray(notebook?.videos)
+        ? notebook.videos.map((item) => item.video).filter(Boolean)
+        : [];
+      const notebookTitle = notebook?.title || "合集";
+      setActiveNotebookTitle(notebookTitle);
+      setHistoryVideos(videos);
+      void maybePromptResumeChapterQueue(notebookId, notebookTitle, videos);
+
+      if (shouldSelectFirst && videos[0]) {
+        handleSelectHistoryVideo(videos[0], { preserveNotebook: true, replaceUrl: true });
+      }
+    } catch {
+      setHistoryVideos([]);
+      setActiveNotebookTitle("");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [maybePromptResumeChapterQueue]);
+
   // 切换到历史 Tab 时加载视频列表
   useEffect(() => {
     if (sidebarTab !== "history") return;
+    if (activeNotebookId) {
+      loadNotebookVideos(activeNotebookId, isHistoryMode);
+      return;
+    }
     setHistoryLoading(true);
     fetch("/api/videos?pageSize=50&sort=createdAt_desc")
       .then(async (r) => {
@@ -711,19 +908,23 @@ export default function AnalyzePage() {
         setHistoryVideos([]);
       })
       .finally(() => setHistoryLoading(false));
-  }, [sidebarTab]);
+  }, [activeNotebookId, isHistoryMode, loadNotebookVideos, sidebarTab]);
 
   // 切换账号时，立即清空旧账号历史，避免 UI 残留造成“串号”错觉
   useEffect(() => {
-    setHistoryVideos([]);
+    if (!activeNotebookId) setHistoryVideos([]);
     setHistoryKeyword("");
     if (sidebarTab === "history" && authStatus === "authenticated") {
-      refreshHistory();
+      if (activeNotebookId) loadNotebookVideos(activeNotebookId, isHistoryMode);
+      else refreshHistory();
     }
-  }, [currentUserId, authStatus, sidebarTab, refreshHistory]);
+  }, [activeNotebookId, currentUserId, authStatus, isHistoryMode, loadNotebookVideos, sidebarTab, refreshHistory]);
 
   // 点击历史视频：加载分析数据
-  const handleSelectHistoryVideo = async (video: HistoryVideo) => {
+  const handleSelectHistoryVideo = async (
+    video: HistoryVideo,
+    options: { preserveNotebook?: boolean; replaceUrl?: boolean } = {}
+  ) => {
     const info: VideoInfo = {
       title: video.title,
       pic: video.pic || "",
@@ -738,8 +939,14 @@ export default function AnalyzePage() {
     setCurrentVideoId(video.id);
     setMessages([]);
     loadChatHistory(video.id);
-    setSidebarTab("subtitle");
-    router.replace(`/analyze/${video.bvid}`);
+    setSidebarTab(options.preserveNotebook || isNotebookMode ? "history" : "subtitle");
+    const nextParams = new URLSearchParams();
+    if (options.preserveNotebook || isNotebookMode) {
+      const notebookId = activeNotebookId || notebookIdFromQueue;
+      if (notebookId) nextParams.set("notebookId", notebookId);
+    }
+    const nextUrl = `/analyze/${video.bvid}${nextParams.toString() ? `?${nextParams.toString()}` : ""}`;
+    if (options.replaceUrl !== false) router.replace(nextUrl);
   };
 
   // 前端过滤历史视频
@@ -751,6 +958,86 @@ export default function AnalyzePage() {
       )
     : historyVideos;
 
+  const getCurrentChapterTitle = (info: VideoInfo) => {
+    if (!isChapterQueue) return info.title;
+    const page = info.pages?.find((item) => item.page === chapterPage || item.cid === Number(cid));
+    if (!page) return `${info.title} - P${chapterPage}`;
+    return page.part ? `${info.title} - P${page.page} ${page.part}` : `${info.title} - P${page.page}`;
+  };
+
+  const addVideoToQueueNotebook = async (videoId: string) => {
+    if (!isChapterQueue || !notebookIdFromQueue) return;
+    await fetch(`/api/notebooks/${notebookIdFromQueue}/videos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ videoId }),
+    });
+  };
+
+  const getNextChapterPage = (info: VideoInfo) => {
+    const pages = info.pages || [];
+    const currentIndex = pages.findIndex((page) => page.page === chapterPage || page.cid === Number(cid));
+    return currentIndex >= 0 ? pages[currentIndex + 1] : undefined;
+  };
+
+  const goToNextChapter = (info: VideoInfo) => {
+    if (!notebookIdFromQueue) return;
+    const queueNotebookId = notebookIdFromQueue;
+    const nextPage = getNextChapterPage(info);
+    if (!nextPage) {
+      message.success("全部章节解析完成，已保存到章节合集笔记本");
+      refreshHistory();
+      return;
+    }
+
+    message.info(`P${chapterPage} 已保存，稍后开始解析 P${nextPage.page}`);
+    window.setTimeout(() => {
+      const params = new URLSearchParams();
+      params.set("platform", "bilibili");
+      params.set("cid", String(nextPage.cid));
+      params.set("chapterQueue", "all");
+      params.set("chapterPage", String(nextPage.page));
+      params.set("notebookId", queueNotebookId);
+      router.push(`/analyze/${nextPage.bvid || bvid}?${params.toString()}`);
+    }, 1200);
+  };
+
+  const advanceChapterQueue = async (info: VideoInfo, videoId: string) => {
+    if (!isChapterQueue || !notebookIdFromQueue || chapterQueueAdvanceRef.current === storageBvid) return;
+    chapterQueueAdvanceRef.current = storageBvid;
+
+    try {
+      await addVideoToQueueNotebook(videoId);
+    } catch {
+      message.warning("当前章节已保存，但关联到章节合集笔记本失败");
+    }
+
+    goToNextChapter(info);
+  };
+
+  const handleChapterQueueFailure = (errorMessage: string) => {
+    if (!isChapterQueue || !videoInfoRef.current) return false;
+    const info = videoInfoRef.current;
+    const nextPage = getNextChapterPage(info);
+
+    Modal.confirm({
+      title: `P${chapterPage} 解析失败`,
+      content: nextPage
+        ? `${errorMessage}。可以重试当前章节，或跳过它继续解析 P${nextPage.page}。`
+        : `${errorMessage}。这是最后一个章节，可以重试当前章节或停止队列。`,
+      okText: "重试当前章节",
+      cancelText: nextPage ? "跳过继续" : "停止队列",
+      centered: true,
+      onOk: () => window.location.reload(),
+      onCancel: () => {
+        if (nextPage) goToNextChapter(info);
+        else message.info("章节队列已停止");
+      },
+    });
+
+    return true;
+  };
+
   // 自动保存视频记录到数据库（字幕 + 摘要），info 参数避免闭包陷阱
   const autoSaveVideo = async (info: VideoInfo, text: string, source: string, summaryText: string) => {
     try {
@@ -758,8 +1045,8 @@ export default function AnalyzePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          bvid,
-          title: info.title,
+          bvid: storageBvid,
+          title: getCurrentChapterTitle(info),
           pic: info.pic,
           desc: info.desc,
           duration: info.duration,
@@ -778,6 +1065,7 @@ export default function AnalyzePage() {
         const data = await res.json();
         if (data.video?.id) {
           setCurrentVideoId(data.video.id);
+          void advanceChapterQueue(info, data.video.id);
           return data.video.id as string;
         }
       }
@@ -846,7 +1134,7 @@ export default function AnalyzePage() {
     (async () => {
       // 先查数据库，看是否已有完整的分析数据
       try {
-        const dbRes = await fetch(`/api/videos?bvid=${bvid}`);
+        const dbRes = await fetch(`/api/videos?bvid=${storageBvid}`);
         if (dbRes.ok && !cancelled) {
           const dbData = await dbRes.json();
           if (dbData.video && dbData.video.subtitleText) {
@@ -933,7 +1221,9 @@ export default function AnalyzePage() {
           });
           const subData = await subRes.json();
           if (subData.error) {
-            setError(subData.error);
+            if (!handleChapterQueueFailure(subData.error)) {
+              setError(subData.error);
+            }
             setTranscribing(false);
             setSummaryLoading(false);
             return;
@@ -989,7 +1279,10 @@ export default function AnalyzePage() {
                     } else if (event.type === "status") {
                       setTranscribeStep(event.message);
                     } else if (event.type === "error") {
-                      setError("语音转写失败：" + event.error);
+                      const message = "语音转写失败：" + event.error;
+                      if (!handleChapterQueueFailure(message)) {
+                        setError(message);
+                      }
                       setTranscribing(false);
                       setSummaryLoading(false);
                       return;
@@ -1007,8 +1300,11 @@ export default function AnalyzePage() {
               }
             }
           }
-        } catch {
-          setError("处理失败，请重试");
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "处理失败，请重试";
+          if (!handleChapterQueueFailure(message)) {
+            setError(message);
+          }
           setSummaryLoading(false);
           setTranscribing(false);
         }
@@ -1648,7 +1944,7 @@ export default function AnalyzePage() {
         <div className="analyze-video-cover" style={{ width: "100%", aspectRatio: "16/9", background: "var(--card)", borderRadius: 8, overflow: "hidden" }}>
           {videoInfo.pic || videoInfo.coverUrl ? (
             <img
-              src={videoInfo.pic || videoInfo.coverUrl}
+              src={getDisplayImageUrl(videoInfo.pic || videoInfo.coverUrl)}
               alt={videoInfo.title}
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
               referrerPolicy="no-referrer"
@@ -1760,13 +2056,13 @@ export default function AnalyzePage() {
           },
           {
             key: "history",
-            label: <span><HistoryOutlined /> 历史</span>,
+            label: <span><HistoryOutlined /> {activeNotebookTitle || "历史"}</span>,
             children: (
               <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
                 <div style={{ padding: "8px 12px", flexShrink: 0 }}>
                   <Input
                     size="small"
-                    placeholder="搜索标题或UP主..."
+                    placeholder={activeNotebookTitle ? "搜索合集内视频..." : "搜索标题或UP主..."}
                     prefix={<SearchOutlined />}
                     allowClear
                     value={historyKeyword}
@@ -1781,7 +2077,7 @@ export default function AnalyzePage() {
                   ) : filteredHistory.length === 0 ? (
                     <Empty
                       image={Empty.PRESENTED_IMAGE_SIMPLE}
-                      description={<Text type="secondary">{historyKeyword ? "没有匹配的视频" : "还没有分析过视频"}</Text>}
+                      description={<Text type="secondary">{historyKeyword ? "没有匹配的视频" : activeNotebookTitle ? "这个合集还没有视频" : "还没有分析过视频"}</Text>}
                       style={{ padding: "24px 0" }}
                     />
                   ) : (
@@ -1789,12 +2085,12 @@ export default function AnalyzePage() {
                       {filteredHistory.map((v) => (
                         <div
                           key={v.id}
-                          className={`history-item ${v.bvid === bvid ? "history-item-active" : ""}`}
-                          onClick={() => handleSelectHistoryVideo(v)}
+                          className={`history-item ${v.bvid === storageBvid ? "history-item-active" : ""}`}
+                          onClick={() => handleSelectHistoryVideo(v, { preserveNotebook: isNotebookMode })}
                         >
                           <div className="history-item-cover">
                             {v.pic ? (
-                              <img src={v.pic} alt={v.title} />
+                              <img src={getDisplayImageUrl(v.pic)} alt={v.title} />
                             ) : (
                               <div className="history-item-placeholder">
                                 <PlayCircleOutlined />

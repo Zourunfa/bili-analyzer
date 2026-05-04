@@ -137,7 +137,7 @@ export default function NotebooksPage() {
         <Row gutter={[16, 16]}>
           {notebooks.map((nb, idx) => (
             <Col key={nb.id} xs={24} sm={12} md={8} lg={6}>
-              <Link href={`/notebooks/${nb.id}`} className="notebook-card-link">
+              <Link href={`/analyze/history?notebookId=${nb.id}`} className="notebook-card-link">
                 <div
                   className="notebook-card"
                   style={{ animationDelay: `${idx * 0.05}s` }}

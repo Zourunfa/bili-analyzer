@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --port 3300",
-    "dev:local": "PATH=\"$HOME/.venv/bin:$PATH\" next dev --port 3300",
+    "dev:local": "PATH=\"$HOME/.venv/bin:$PATH\" next dev --port 3300 --hostname 0.0.0.0",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",

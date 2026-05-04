@@ -1,5 +1,5 @@
 import { execFile } from "child_process";
-import { mkdir, readFile, rm, readdir } from "fs/promises";
+import { mkdir, readFile, rm, readdir, stat } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
@@ -9,6 +9,12 @@ const TMP_BASE = "/tmp/bilibili-subtitle";
 function getEnvMs(name: string, fallback: number): number {
   const raw = Number.parseInt(process.env[name] || "", 10);
   return Number.isFinite(raw) && raw > 10_000 ? raw : fallback;
+}
+
+function getEnvNumber(name: string, fallback: number, min: number, max?: number): number {
+  const raw = Number.parseFloat(process.env[name] || "");
+  const value = Number.isFinite(raw) && raw >= min ? raw : fallback;
+  return typeof max === "number" ? Math.min(value, max) : value;
 }
 
 interface SubtitleItem {
@@ -33,7 +39,7 @@ function exec(
   });
 }
 
-// bcut/bijian/jianying API 偶发返回缺字段（如 'data'/'state'/'task_id'/'result'）、
+// bijian/jianying API 偶发返回缺字段（如 'data'/'state'/'task_id'/'result'）、
 // 网络抖动或 5xx，都属于可重试的瞬时错误。
 function isTransientTranscribeError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
@@ -47,8 +53,146 @@ function isTransientTranscribeError(err: unknown): boolean {
   );
 }
 
+function isAsrProviderLimitError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    /duration limit exceeded/.test(msg) ||
+    /时长.*限制/.test(msg) ||
+    /音频.*过长/.test(msg)
+  );
+}
+
+function getAsrProviders(): string[] {
+  const whisperApiKey = process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY || "";
+  const defaultProviders = whisperApiKey ? "bijian,jianying,whisper-api" : "bijian,jianying";
+  const raw = process.env.TRANSCRIBE_ASR_PROVIDERS || defaultProviders;
+  const supported = new Set(["faster-whisper", "whisper-api", "bijian", "jianying", "whisper-cpp"]);
+  const providers = raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item && supported.has(item))
+    .filter((item) => item !== "whisper-api" || !!whisperApiKey);
+  return providers.length > 0 ? [...new Set(providers)] : ["bijian", "jianying"];
+}
+
+function hasWhisperApiKey(): boolean {
+  return !!(process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY);
+}
+
+function getTranscribeArgs(inputPath: string, outputPath: string, asrProvider: string): string[] {
+  const args = [
+    "transcribe",
+    inputPath,
+    "--asr", asrProvider,
+    "--format", "srt",
+    "-o", outputPath,
+    "-q",
+  ];
+
+  if (asrProvider === "whisper-api") {
+    const apiKey = process.env.WHISPER_API_KEY || process.env.OPENAI_API_KEY || "";
+    const apiBase = process.env.WHISPER_API_BASE || process.env.OPENAI_BASE_URL || "";
+    const model = process.env.WHISPER_MODEL || "whisper-1";
+    if (apiKey) args.push("--whisper-api-key", apiKey);
+    if (apiBase) args.push("--whisper-api-base", apiBase);
+    if (model) args.push("--whisper-model", model);
+  }
+
+  return args;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function getMediaDurationSeconds(filePath: string): Promise<number> {
+  const output = await exec("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    filePath,
+  ], 60_000);
+  const duration = Number.parseFloat(output);
+  return Number.isFinite(duration) && duration > 0 ? duration : 0;
+}
+
+function formatSrtTime(seconds: number): string {
+  const clamped = Math.max(0, seconds);
+  const hours = Math.floor(clamped / 3600);
+  const minutes = Math.floor((clamped % 3600) / 60);
+  const secs = Math.floor(clamped % 60);
+  const millis = Math.round((clamped - Math.floor(clamped)) * 1000);
+  return [
+    String(hours).padStart(2, "0"),
+    String(minutes).padStart(2, "0"),
+    String(secs).padStart(2, "0"),
+  ].join(":") + `,${String(millis).padStart(3, "0")}`;
+}
+
+function shiftSrtTimestamps(srtText: string, offsetSeconds: number): string {
+  return srtText.replace(
+    /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/g,
+    (line, h1, m1, s1, ms1, h2, m2, s2, ms2) => {
+      const from =
+        Number(h1) * 3600 + Number(m1) * 60 + Number(s1) + Number(ms1) / 1000 + offsetSeconds;
+      const to =
+        Number(h2) * 3600 + Number(m2) * 60 + Number(s2) + Number(ms2) / 1000 + offsetSeconds;
+      return `${formatSrtTime(from)} --> ${formatSrtTime(to)}`;
+    }
+  );
+}
+
+function renumberSrt(srtText: string): string {
+  const blocks = srtText
+    .trim()
+    .split(/\n\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  return blocks
+    .map((block, index) => {
+      const lines = block.split("\n");
+      if (/^\d+$/.test(lines[0]?.trim() || "")) {
+        return [String(index + 1), ...lines.slice(1)].join("\n");
+      }
+      return [String(index + 1), ...lines].join("\n");
+    })
+    .join("\n\n");
+}
+
+async function splitAudioForTranscribe(
+  audioPath: string,
+  workDir: string,
+  segmentSeconds: number
+): Promise<Array<{ path: string; offsetSeconds: number }>> {
+  const duration = await getMediaDurationSeconds(audioPath);
+  if (!duration || duration <= segmentSeconds) {
+    return [{ path: audioPath, offsetSeconds: 0 }];
+  }
+
+  const chunks: Array<{ path: string; offsetSeconds: number }> = [];
+  for (let offset = 0, index = 1; offset < duration; offset += segmentSeconds, index++) {
+    const chunkPath = join(workDir, `chunk-${String(index).padStart(3, "0")}.m4a`);
+    await exec("ffmpeg", [
+      "-ss", String(offset),
+      "-t", String(segmentSeconds),
+      "-i", audioPath,
+      "-vn",
+      "-ac", "1",
+      "-ar", "16000",
+      "-c:a", "aac",
+      "-b:a", "64k",
+      "-y",
+      chunkPath,
+    ], 120_000);
+
+    const info = await stat(chunkPath).catch(() => null);
+    if (info && info.size > 0) {
+      chunks.push({ path: chunkPath, offsetSeconds: offset });
+    }
+  }
+
+  return chunks.length > 0 ? chunks : [{ path: audioPath, offsetSeconds: 0 }];
 }
 
 /**
@@ -91,13 +235,16 @@ export async function downloadAudio(bvid: string): Promise<string> {
 /**
  * 语音转写，返回 SRT 文本
  *
- * 对 bcut/bijian/jianying 接口的瞬时错误（KeyError: 'data' 等）自动重试。
+ * 对 bijian/jianying 接口的瞬时错误（KeyError: 'data' 等）自动重试。
  * BaseASR 使用 CRC32 缓存（2天），已成功的分块不会重复请求接口。
  */
 export async function transcribeAudio(
   videoPath: string
 ): Promise<string> {
   const transcribeTimeoutMs = getEnvMs("TRANSCRIBE_TIMEOUT_MS", 900_000);
+  // Keep the pre-split interval close to videocaptioner's original internal
+  // chunk length, so long videos do not explode into hundreds of ASR requests.
+  const segmentSeconds = getEnvNumber("TRANSCRIBE_SEGMENT_SECONDS", 600, 30);
   const maxAttempts = Math.max(
     1,
     Number.parseInt(process.env.TRANSCRIBE_MAX_RETRIES || "3", 10) || 3
@@ -105,35 +252,71 @@ export async function transcribeAudio(
   const workDir = join(TMP_BASE, randomUUID());
   await mkdir(workDir, { recursive: true });
 
-  const outputPath = join(workDir, "subtitle.srt");
+  const chunks = await splitAudioForTranscribe(videoPath, workDir, segmentSeconds);
+  const merged: string[] = [];
+  const asrProviders = getAsrProviders();
+  const triedProviders = new Set<string>();
 
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await exec(VC, [
-        "transcribe",
-        videoPath,
-        "--asr", "bijian",
-        "--format", "srt",
-        "-o", outputPath,
-        "-q",
-      ], transcribeTimeoutMs);
-      return await readFile(outputPath, "utf-8");
-    } catch (err) {
-      lastErr = err;
-      if (attempt >= maxAttempts || !isTransientTranscribeError(err)) {
-        throw err;
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+    const chunk = chunks[chunkIndex];
+    const outputPath = join(workDir, `subtitle-${String(chunkIndex + 1).padStart(3, "0")}.srt`);
+
+    let lastErr: unknown;
+    let chunkDone = false;
+    for (const asrProvider of asrProviders) {
+      triedProviders.add(asrProvider);
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          await exec(VC, getTranscribeArgs(chunk.path, outputPath, asrProvider), transcribeTimeoutMs);
+
+          const srt = await readFile(outputPath, "utf-8");
+          if (srt.trim()) {
+            merged.push(shiftSrtTimestamps(srt, chunk.offsetSeconds));
+          }
+          chunkDone = true;
+          break;
+        } catch (err) {
+          lastErr = err;
+          const msg = err instanceof Error ? err.message : String(err);
+          const canTryNextProvider = attempt >= maxAttempts && asrProviders.length > 1;
+
+          if (isAsrProviderLimitError(err) && canTryNextProvider) {
+            console.warn(
+              `[transcribe] ${asrProvider} rejected chunk ${chunkIndex + 1}/${chunks.length}: ${msg.slice(0, 200)} — trying next ASR provider`
+            );
+            break;
+          }
+
+          if (attempt >= maxAttempts || !isTransientTranscribeError(err)) {
+            break;
+          }
+
+          const backoffMs = 2_000 * attempt + Math.floor(Math.random() * 1_000);
+          console.warn(
+            `[transcribe] ${asrProvider} chunk ${chunkIndex + 1}/${chunks.length} attempt ${attempt}/${maxAttempts} failed (transient): ${msg.slice(0, 200)} — retrying in ${backoffMs}ms`
+          );
+          await sleep(backoffMs);
+        }
       }
-      const backoffMs = 2_000 * attempt + Math.floor(Math.random() * 1_000);
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[transcribe] attempt ${attempt}/${maxAttempts} failed (transient): ${msg.slice(0, 200)} — retrying in ${backoffMs}ms`
-      );
-      await sleep(backoffMs);
+
+      if (chunkDone) {
+        break;
+      }
+    }
+
+    if (!chunkDone) {
+      const suffix = `（已尝试 ASR: ${[...triedProviders].join(", ")}）`;
+      const whisperHint = hasWhisperApiKey()
+        ? ""
+        : "。免费 ASR 通道失败，且未配置 WHISPER_API_KEY / OPENAI_API_KEY，无法进入 whisper-api 兜底";
+      if (lastErr instanceof Error) {
+        throw new Error(`${lastErr.message}${suffix}${whisperHint}`);
+      }
+      throw new Error(`转写失败${suffix}${whisperHint}`);
     }
   }
 
-  throw lastErr instanceof Error ? lastErr : new Error("转写失败");
+  return renumberSrt(merged.join("\n\n"));
 }
 
 /**

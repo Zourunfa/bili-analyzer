@@ -290,7 +290,7 @@ export default function NotebookDetailPage() {
                     </div>
                   }
                   actions={[
-                    <Link href={`/analyze/${nv.video.bvid}`} key="analyze">
+                    <Link href={`/analyze/${nv.video.bvid}?notebookId=${params.id}`} key="analyze">
                       <FileTextOutlined /> 查看
                     </Link>,
                     <span key="remove" onClick={() => handleRemoveVideo(nv.video.id)} style={{ color: "#ff4d4f" }}>

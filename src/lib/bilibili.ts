@@ -165,6 +165,14 @@ const MIXIN_KEY_ENC_TAB = [
   26, 41, 55, 34, 54, 16, 23, 22, 46, 40, 31, 53, 6, 42, 51, 30,
 ];
 
+export interface BilibiliVideoPage {
+  bvid?: string;
+  cid: number;
+  page: number;
+  part: string;
+  duration: number;
+}
+
 interface VideoInfo {
   bvid: string;
   aid: number;
@@ -177,6 +185,7 @@ interface VideoInfo {
   };
   duration: number;
   cid: number;
+  pages?: BilibiliVideoPage[];
 }
 
 interface SubtitleItem {
@@ -575,6 +584,35 @@ export async function getVideoInfo(bvid: string, retries = 2): Promise<VideoInfo
       }
 
       const v = ((data.data as Record<string, unknown> | undefined) || {});
+      const multipartPages = Array.isArray(v.pages)
+        ? (v.pages as Array<Record<string, unknown>>)
+            .map((page) => ({
+              bvid: (v.bvid as string) || bvid,
+              cid: Number(page.cid || 0),
+              page: Number(page.page || 0),
+              part: String(page.part || ""),
+              duration: Number(page.duration || 0),
+            }))
+            .filter((page) => page.cid > 0 && page.page > 0)
+        : [];
+      const seasonEpisodes = (((v.ugc_season as Record<string, unknown> | undefined)?.sections as
+        | Array<Record<string, unknown>>
+        | undefined) || [])
+        .flatMap((section) => ((section.episodes as Array<Record<string, unknown>> | undefined) || []));
+      const seasonPages = seasonEpisodes
+        .map((episode, index) => {
+          const episodePage = (episode.page as Record<string, unknown> | undefined) || {};
+          const episodeArc = (episode.arc as Record<string, unknown> | undefined) || {};
+          return {
+            bvid: String(episode.bvid || episodeArc.bvid || ""),
+            cid: Number(episode.cid || episodePage.cid || 0),
+            page: index + 1,
+            part: String(episode.title || episodePage.part || episodeArc.title || ""),
+            duration: Number(episode.duration || episodePage.duration || episodeArc.duration || 0),
+          };
+        })
+        .filter((page) => page.bvid && page.cid > 0);
+      const pages = multipartPages.length > 1 ? multipartPages : seasonPages.length > 1 ? seasonPages : multipartPages;
       return {
         bvid: (v.bvid as string) || bvid,
         aid: Number(v.aid || 0),
@@ -587,6 +625,7 @@ export async function getVideoInfo(bvid: string, retries = 2): Promise<VideoInfo
         },
         duration: Number(v.duration || 0),
         cid: Number(v.cid || 0),
+        pages,
       };
     } catch (err) {
       lastError = err;

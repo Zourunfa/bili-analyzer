@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Input, Button, Alert, Space } from "antd";
+import { Input, Button, Alert, Space, Modal, message } from "antd";
 import {
   SearchOutlined, PlayCircleOutlined, BookOutlined, ThunderboltOutlined,
-  ExportOutlined, RobotOutlined, BulbOutlined,
+  ExportOutlined, RobotOutlined,
 } from "@ant-design/icons";
 import Link from "next/link";
 
@@ -17,11 +17,89 @@ const features = [
   { icon: <ExportOutlined />, title: "Skill 导出", desc: "将知识打包为标准 Agent Skill 结构", color: "#fbbf24" },
 ];
 
+type VideoInfoResponse = {
+  platform: "bilibili" | "douyin" | "xiaohongshu";
+  id: string;
+  title?: string;
+  cid?: number;
+  page?: number;
+  pages?: Array<{ bvid?: string; cid: number; page: number; part: string; duration: number }>;
+  error?: string;
+};
+
 export default function Home() {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
+
+  const buildAnalyzeUrl = (data: VideoInfoResponse) => {
+    const params = new URLSearchParams();
+    params.set("platform", data.platform);
+    if (data.platform === "bilibili" && data.cid) {
+      params.set("cid", String(data.cid));
+    }
+    return `/analyze/${data.id}?${params.toString()}`;
+  };
+
+  const analyzeAllChapters = async (data: VideoInfoResponse) => {
+    const pages = data.pages || [];
+    const firstPage = pages[0];
+    if (!firstPage) {
+      router.push(buildAnalyzeUrl(data));
+      return;
+    }
+
+    const hide = message.loading("正在创建章节笔记本...", 0);
+    try {
+      const notebookRes = await fetch("/api/notebooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `${data.title || data.id} 章节合集`,
+          description: `自动保存 ${data.id} 的 ${pages.length} 个章节解析结果`,
+          tags: ["章节合集"],
+          mode: "manual",
+        }),
+      });
+      const notebookData = await notebookRes.json();
+      if (!notebookRes.ok || !notebookData.notebook?.id) {
+        throw new Error(notebookData.error || "章节笔记本创建失败");
+      }
+
+      hide();
+      message.success("章节合集笔记本已创建，开始按顺序解析");
+      const params = new URLSearchParams();
+      params.set("platform", "bilibili");
+      params.set("cid", String(firstPage.cid));
+      params.set("chapterQueue", "all");
+      params.set("chapterPage", String(firstPage.page));
+      params.set("notebookId", notebookData.notebook.id);
+      router.push(`/analyze/${firstPage.bvid || data.id}?${params.toString()}`);
+    } catch (err) {
+      hide();
+      message.error(err instanceof Error ? err.message : "章节队列启动失败");
+    }
+  };
+
+  const continueWithVideoInfo = (data: VideoInfoResponse) => {
+    const isMultipart = data.platform === "bilibili" && (data.pages?.length || 0) > 1;
+    if (!isMultipart) {
+      router.push(buildAnalyzeUrl(data));
+      return;
+    }
+
+    const currentPage = data.page || data.pages?.find((page) => page.cid === data.cid)?.page || 1;
+    Modal.confirm({
+      title: "检测到这是一个章节/分P视频",
+      content: `当前链接指向第 ${currentPage} 个视频。选择全部解析时，会自动创建一个章节合集笔记本，并按顺序逐个解析保存。`,
+      okText: "创建笔记本并解析全部",
+      cancelText: "只解析当前视频",
+      centered: true,
+      onOk: () => analyzeAllChapters(data),
+      onCancel: () => router.push(buildAnalyzeUrl(data)),
+    });
+  };
 
   const handleSubmit = async () => {
     setError("");
@@ -37,14 +115,7 @@ export default function Home() {
         setError(data.error || "获取视频信息失败");
         return;
       }
-      // 多平台跳转
-      const analyzeId = data.platform === "bilibili" ? data.id : data.id;
-      const params = new URLSearchParams();
-      params.set("platform", data.platform);
-      if (data.platform === "bilibili" && data.cid) {
-        params.set("cid", String(data.cid));
-      }
-      router.push(`/analyze/${analyzeId}?${params.toString()}`);
+      continueWithVideoInfo(data);
     } catch {
       setError("网络错误，请重试");
     } finally {
