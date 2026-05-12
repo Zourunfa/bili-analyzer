@@ -350,12 +350,13 @@ async function getWbiKeys(): Promise<{ imgKey: string; subKey: string; isLogin: 
       const data = await res.json();
       const code = Number(data?.code ?? -1);
       const message = String(data?.message || data?.msg || "");
+      const wbiImg = data.data?.wbi_img;
 
-      if (code !== 0) {
+      if (code !== 0 && !wbiImg) {
         throw new Error(`nav 响应异常: code=${code}, message=${message || "unknown"}`);
       }
 
-      const isLogin = data.data?.isLogin === true;
+      const isLogin = code === 0 && data.data?.isLogin === true;
       cachedLoginStatus = isLogin;
       const hasSessdata = Boolean(getActiveCookieSet().sessdata);
       if (hasSessdata) {
@@ -363,8 +364,12 @@ async function getWbiKeys(): Promise<{ imgKey: string; subKey: string; isLogin: 
       } else {
         console.log("[bilibili] 未配置 BILIBILI_SESSDATA（匿名访问）");
       }
+      if (code !== 0) {
+        console.warn(
+          `[bilibili] nav 返回非登录态但包含 WBI keys，继续以匿名模式请求: code=${code}, message=${message || "unknown"}`
+        );
+      }
 
-      const wbiImg = data.data?.wbi_img;
       if (!wbiImg) {
         throw new Error(`WBI keys 获取失败，wbi_img 为空。message=${message || "unknown"}`);
       }
@@ -729,9 +734,10 @@ type PlayurlResponse = {
  */
 async function buildPlayurlHeaders(): Promise<Record<string, string>> {
   const anon = await getAnonymousCookies();
-  const sessdata = normalizeSessdata(process.env.BILIBILI_SESSDATA || "");
-  const dedeUserId = (process.env.BILIBILI_DEDE_USERID || "").trim();
-  const biliJct = (process.env.BILIBILI_BILI_JCT || "").trim();
+  const shouldUseAccountCookies = cachedLoginStatus !== false;
+  const sessdata = shouldUseAccountCookies ? normalizeSessdata(process.env.BILIBILI_SESSDATA || "") : "";
+  const dedeUserId = shouldUseAccountCookies ? (process.env.BILIBILI_DEDE_USERID || "").trim() : "";
+  const biliJct = shouldUseAccountCookies ? (process.env.BILIBILI_BILI_JCT || "").trim() : "";
 
   const cookieParts: string[] = [];
   if (anon) cookieParts.push(anon);

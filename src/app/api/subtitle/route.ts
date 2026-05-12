@@ -50,12 +50,9 @@ export async function POST(req: NextRequest) {
 
     console.log(`[subtitle] bvid=${bvid}, cid=${cid}`);
 
-    // 先检查 SESSDATA 是否配置
+    // SESSDATA 只用于优先获取 CC 字幕；缺失时仍尽量走匿名音频转写兜底。
     if (!process.env.BILIBILI_SESSDATA) {
-      return NextResponse.json(
-        { error: "未配置 BILIBILI_SESSDATA，请在 .env.local 中填入" },
-        { status: 500 }
-      );
+      console.warn("[subtitle] 未配置 BILIBILI_SESSDATA，将尝试匿名字幕/音频转写");
     }
 
     // 优先尝试 CC 字幕
