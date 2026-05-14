@@ -1,0 +1,11 @@
+.git
+.next
+node_modules
+data
+.env
+.env.*
+Dockerfile.local-build
+npm-debug.log*
+*.tar
+*.tgz
+*.log

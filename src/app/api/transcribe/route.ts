@@ -59,6 +59,9 @@ export async function POST(req: NextRequest) {
             // 抖音：videoUrl 是 douyinvod.com CDN 直链，用 fetch 直接下载再 ffmpeg 提音频
             const { downloadDouyinAudio } = await import("@/lib/douyin");
             audioPath = await downloadDouyinAudio(videoUrl);
+          } else if (platform === "xiaohongshu" && videoUrl) {
+            const { downloadXHSAudio } = await import("@/lib/xiaohongshu");
+            audioPath = await downloadXHSAudio(videoUrl);
           } else {
             // 其他平台：用 yt-dlp
             audioPath = await downloadAudioFromUrl(videoUrl);

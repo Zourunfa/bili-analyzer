@@ -39,6 +39,9 @@ export default function Home() {
     if (data.platform === "bilibili" && data.cid) {
       params.set("cid", String(data.cid));
     }
+    if (data.platform !== "bilibili" && url.trim()) {
+      params.set("sourceUrl", url.trim());
+    }
     return `/analyze/${data.id}?${params.toString()}`;
   };
 

@@ -356,6 +356,7 @@ export default function AnalyzePage() {
   const cid = searchParams.get("cid");
   const isHistoryMode = bvid === "history";
   const platform = (searchParams.get("platform") || "bilibili") as "bilibili" | "douyin" | "xiaohongshu";
+  const sourceUrl = searchParams.get("sourceUrl") || "";
   const chapterQueue = searchParams.get("chapterQueue");
   const notebookIdFromQueue = searchParams.get("notebookId");
   const activeNotebookId = searchParams.get("notebookId");
@@ -427,6 +428,9 @@ export default function AnalyzePage() {
     const params = new URLSearchParams();
     params.set("platform", data.platform);
     if (data.platform === "bilibili" && data.cid) params.set("cid", String(data.cid));
+    if (data.platform !== "bilibili" && headerUrl.trim()) {
+      params.set("sourceUrl", headerUrl.trim());
+    }
     return `/analyze/${data.id}?${params.toString()}`;
   };
 
@@ -1130,6 +1134,9 @@ export default function AnalyzePage() {
     let cancelled = false;
     setCurrentVideoId(null);
     setMessages([]);
+    setSubtitleText("");
+    setSummary("");
+    setError("");
 
     (async () => {
       // 先查数据库，看是否已有完整的分析数据
@@ -1180,7 +1187,7 @@ export default function AnalyzePage() {
         const infoRes = await fetch("/api/video-info", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: bvid }),
+          body: JSON.stringify({ url: platform === "bilibili" ? bvid : sourceUrl || bvid }),
         });
         const rawData = await infoRes.json() as VideoApiData;
         infoData = rawData;
@@ -1353,6 +1360,12 @@ export default function AnalyzePage() {
                   return;
                 } else if (event.type === "done") {
                   const transData = event.data;
+                  if (!transData.text?.trim()) {
+                    setError("语音转写结果为空，无法生成摘要");
+                    setTranscribing(false);
+                    setSummaryLoading(false);
+                    return;
+                  }
                   setTranscribeStep("转写完成，正在生成摘要...");
                   setTranscribeVisualProgress(96);
                   setSubtitleText(transData.text);
@@ -1365,12 +1378,23 @@ export default function AnalyzePage() {
           }
         }
       } else {
-        // 无视频直链，退回到 description 生成摘要
+        const fallbackText = String(infoData.description || "").trim();
+        const titleText = String(infoData.title || "").trim();
+        const platformLabel = platform === "douyin" ? "抖音" : "小红书";
+        const genericTitle = platform === "douyin" ? "抖音视频" : "小红书笔记";
+        if (!fallbackText || titleText === genericTitle) {
+          setError(`未能获取到${platformLabel}视频直链或有效描述，请重新粘贴原始分享链接后重试。`);
+          setSummaryLoading(false);
+          setTranscribing(false);
+          return;
+        }
+
         setSummaryLoading(true);
         setTranscribeStep("正在基于视频描述生成摘要...");
+        setSubtitleText(fallbackText);
         try {
-          const summaryText = await generateSummary(infoData.description || infoData.title);
-          setSummary(summaryText);
+          const summaryText = await generateSummary(fallbackText);
+          await autoSaveVideo(videoInfoRef.current!, fallbackText, "description", summaryText);
         } catch {
           setError("生成摘要失败");
         } finally {
@@ -1443,10 +1467,16 @@ export default function AnalyzePage() {
                     return updated;
                   });
                 } else if (event.type === "error") {
-                  setMessages((prev) => [
-                    ...prev,
-                    { role: "assistant", content: event.message || "抱歉，回复失败。" },
-                  ]);
+                  setMessages((prev) => {
+                    const updated = [...prev];
+                    const last = updated[updated.length - 1];
+                    const content = event.message || "抱歉，回复失败。";
+                    if (last?.role === "assistant" && !last.content) {
+                      updated[updated.length - 1] = { ...last, content };
+                      return updated;
+                    }
+                    return [...updated, { role: "assistant", content }];
+                  });
                 }
               } catch { /* ignore parse errors */ }
             }
@@ -1661,6 +1691,10 @@ export default function AnalyzePage() {
       message.warning("请先进入具体视频页再编辑标签");
       return;
     }
+    if (!currentVideoId) {
+      message.warning("视频分析保存完成后才能编辑标签");
+      return;
+    }
     try {
       const [tagRes, relationRes] = await Promise.all([
         fetch("/api/tags"),
@@ -1703,7 +1737,7 @@ export default function AnalyzePage() {
   };
 
   const handleSaveVideoTags = async () => {
-    if (!bvid || isHistoryMode) return;
+    if (!bvid || isHistoryMode || !currentVideoId) return;
     setTagSubmitting(true);
     try {
       const relationRes = await fetch(`/api/videos/${bvid}/tags`);
@@ -1827,7 +1861,7 @@ export default function AnalyzePage() {
   };
 
   const fetchTimestampNotes = useCallback(async () => {
-    if (!bvid || isHistoryMode) {
+    if (!bvid || isHistoryMode || !currentVideoId) {
       setTimestampNotes([]);
       return;
     }
@@ -1845,10 +1879,13 @@ export default function AnalyzePage() {
     } finally {
       setNoteLoading(false);
     }
-  }, [bvid, isHistoryMode]);
+  }, [bvid, currentVideoId, isHistoryMode]);
 
   const handleCreateTimestampNote = async () => {
-    if (!bvid || isHistoryMode) return;
+    if (!bvid || isHistoryMode || !currentVideoId) {
+      message.warning("视频分析保存完成后才能记录笔记");
+      return;
+    }
     const content = noteContentInput.trim();
     if (!content) {
       message.warning("请输入笔记内容");
@@ -2198,7 +2235,7 @@ export default function AnalyzePage() {
         <Button
           icon={<TagsOutlined />}
           onClick={handleOpenTagModal}
-          disabled={!bvid || isHistoryMode}
+          disabled={!bvid || isHistoryMode || !currentVideoId}
           style={{ borderColor: "var(--border)", color: "azure" }}
         >
           标签

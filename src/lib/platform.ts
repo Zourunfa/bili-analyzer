@@ -47,6 +47,7 @@ export interface ParsedVideoId {
   platform: Platform;
   id: string;
   page?: number;
+  sourceUrl?: string;
 }
 
 // ─── URL Pattern Detection ───────────────────────────────────────────────────
@@ -119,15 +120,15 @@ export async function extractVideoId(
   const platform = detectPlatform(urlOrText);
 
   if (platform === "douyin") {
-    const { extractDouyinId } = await import("@/lib/douyin");
-    const id = extractDouyinId(url);
-    return id ? { platform: "douyin", id } : null;
+    const { extractDouyinId, resolveDouyinShortUrl } = await import("@/lib/douyin");
+    const id = extractDouyinId(url) || await resolveDouyinShortUrl(url);
+    return id ? { platform: "douyin", id, sourceUrl: urlOrText } : null;
   }
 
   if (platform === "xiaohongshu") {
     const { extractXHSId } = await import("@/lib/xiaohongshu");
     const id = await extractXHSId(url);
-    return id ? { platform: "xiaohongshu", id } : null;
+    return id ? { platform: "xiaohongshu", id, sourceUrl: url } : null;
   }
 
   // 默认按 B站 处理（extractBvId 已内置 b23.tv 短链接解析）
@@ -138,7 +139,7 @@ export async function extractVideoId(
   if (/^\d{15,20}$/.test(url.trim())) {
     const { extractDouyinId } = await import("@/lib/douyin");
     const id = extractDouyinId(url.trim());
-    if (id) return { platform: "douyin", id };
+    if (id) return { platform: "douyin", id, sourceUrl: url.trim() };
   }
 
   // 尝试小红书（字母数字混合 ID）
@@ -161,12 +162,12 @@ export async function getVideoMetadata(
 ): Promise<PlatformVideoInfo> {
   if (parsed.platform === "douyin") {
     const { getDouyinVideo } = await import("@/lib/douyin");
-    return getDouyinVideo(parsed.id);
+    return getDouyinVideo(parsed.sourceUrl || parsed.id, parsed.id);
   }
 
   if (parsed.platform === "xiaohongshu") {
     const { getXHSVideo } = await import("@/lib/xiaohongshu");
-    return getXHSVideo(parsed.id);
+    return getXHSVideo(parsed.sourceUrl || parsed.id, parsed.id);
   }
 
   // B站

@@ -13,11 +13,11 @@
  */
 
 import { execFile } from "child_process";
-import { mkdir, writeFile, stat, readFile } from "fs/promises";
+import { mkdir, writeFile, stat } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { PlatformVideoInfo } from "@/lib/platform";
-import type { Browser, BrowserContext, Cookie, Page, Response } from "playwright";
+import type { Browser, BrowserContext, Cookie, Page, Response as PlaywrightResponse } from "playwright";
 
 // ─── Video ID Extraction ──────────────────────────────────────────────────────
 
@@ -41,7 +41,20 @@ export function extractDouyinId(rawUrl: string): string | null {
 
 // ─── Short URL Resolution ─────────────────────────────────────────────────────
 
-async function resolveDouyinShortUrl(shortUrl: string): Promise<string | null> {
+export async function resolveDouyinShortUrl(shortUrl: string): Promise<string | null> {
+  const normalizedShortUrl = normalizeDouyinUrl(shortUrl);
+  const directId = extractDouyinId(normalizedShortUrl);
+  if (directId) return directId;
+
+  const cachedId = getCachedShortUrlId(normalizedShortUrl);
+  if (cachedId) return cachedId;
+
+  const httpId = await resolveDouyinShortUrlViaHttp(normalizedShortUrl);
+  if (httpId) {
+    setCachedShortUrlId(normalizedShortUrl, httpId);
+    return httpId;
+  }
+
   const { chromium } = await import("playwright");
   let browser: Browser | null = null;
 
@@ -50,8 +63,10 @@ async function resolveDouyinShortUrl(shortUrl: string): Promise<string | null> {
     const page = await browser.newPage({
       userAgent: PC_UA,
     });
-    await page.goto(shortUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
-    return extractDouyinId(page.url());
+    await page.goto(normalizedShortUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    const id = extractDouyinId(page.url());
+    if (id) setCachedShortUrlId(normalizedShortUrl, id);
+    return id;
   } catch (err) {
     console.warn("[douyin] 短链接解析失败:", err instanceof Error ? err.message : err);
     return null;
@@ -99,9 +114,17 @@ interface AwemeItem {
 
 const PC_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const MOBILE_UA =
+  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
 
 const COOKIE_FILE = join(tmpdir(), "bilibili-subtitle", "douyin-cookies.txt");
 const COOKIE_TTL_MS = 30 * 60 * 1000;
+const SHORT_URL_CACHE_TTL_MS = 30 * 60 * 1000;
+const META_CACHE_TTL_MS = 10 * 60 * 1000;
+
+const shortUrlCache = new Map<string, { id: string; expiresAt: number }>();
+const metaCache = new Map<string, { meta: DouyinRawMeta; expiresAt: number }>();
+const pendingMetaFetches = new Map<string, Promise<DouyinRawMeta>>();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -137,6 +160,187 @@ function mapItemToMeta(item: AwemeItem): DouyinRawMeta {
   };
 }
 
+function extractRouterDataItem(html: string): AwemeItem | null {
+  const markerMatch = html.match(/window\._ROUTER_DATA\s*=\s*/);
+  const marker = markerMatch?.[0];
+  const start = marker ? html.indexOf(marker) : -1;
+  if (start < 0) return null;
+
+  const jsonStart = start + marker!.length;
+  const jsonEnd = html.indexOf("</script>", jsonStart);
+  if (jsonEnd < 0) return null;
+
+  try {
+    const json = JSON.parse(html.slice(jsonStart, jsonEnd).trim()) as {
+      loaderData?: Record<string, { videoInfoRes?: { item_list?: AwemeItem[] } }>;
+    };
+    for (const data of Object.values(json.loaderData || {})) {
+      const item = data.videoInfoRes?.item_list?.[0];
+      if (item?.aweme_id) return item;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function extractFirstUrl(input: string): string | null {
+  return input.match(/https?:\/\/[^\s\]】]+/)?.[0] || null;
+}
+
+function normalizeDouyinUrl(input: string): string {
+  return extractFirstUrl(input)?.replace(/[，。；、]+$/, "") || input.trim();
+}
+
+function getCachedShortUrlId(url: string): string | null {
+  const cached = shortUrlCache.get(url);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    shortUrlCache.delete(url);
+    return null;
+  }
+  return cached.id;
+}
+
+function setCachedShortUrlId(url: string, id: string) {
+  shortUrlCache.set(url, { id, expiresAt: Date.now() + SHORT_URL_CACHE_TTL_MS });
+}
+
+function getCachedMeta(videoId: string): DouyinRawMeta | null {
+  const cached = metaCache.get(videoId);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    metaCache.delete(videoId);
+    return null;
+  }
+  return cached.meta;
+}
+
+function setCachedMeta(videoId: string, meta: DouyinRawMeta) {
+  metaCache.set(videoId, { meta, expiresAt: Date.now() + META_CACHE_TTL_MS });
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<globalThis.Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function resolveDouyinShortUrlViaHttp(shortUrl: string): Promise<string | null> {
+  try {
+    const resp = await fetchWithTimeout(
+      shortUrl,
+      {
+        headers: {
+          "User-Agent": MOBILE_UA,
+          "Accept-Language": "zh-CN,zh;q=0.9",
+        },
+        redirect: "follow",
+      },
+      5_000
+    );
+    return extractDouyinId(resp.url);
+  } catch (err) {
+    console.warn("[douyin] HTTP 短链接解析失败:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+function parseShareTextFallback(input: string): Pick<DouyinRawMeta, "title" | "description" | "authorName"> | null {
+  const withoutUrl = input.replace(/https?:\/\/[^\s\]】]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!withoutUrl || withoutUrl === input.trim() && /^\d{15,20}$/.test(input.trim())) return null;
+
+  const authorName = withoutUrl.match(/看看【(.+?)的作品】/)?.[1] || "抖音用户";
+  const afterAuthor = withoutUrl.replace(/^.*?看看【.+?的作品】/, "").trim();
+  const title = (afterAuthor || withoutUrl)
+    .replace(/\s*a@.*$/i, "")
+    .replace(/\s*[a-zA-Z0-9.]+:\/.*$/i, "")
+    .replace(/^复制打开抖音，?/, "")
+    .replace(/^\d+(?:\.\d+)?\s*/, "")
+    .trim();
+
+  if (!title) return null;
+  return {
+    title,
+    description: title,
+    authorName,
+  };
+}
+
+async function fetchViaSharePage(videoId: string, source?: string): Promise<DouyinRawMeta | null> {
+  const sourceUrl = source ? extractFirstUrl(source) : null;
+  const shareUrl = sourceUrl && /douyin\.com|iesdouyin\.com/i.test(sourceUrl)
+    ? sourceUrl
+    : `https://www.iesdouyin.com/share/video/${videoId}/`;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const resp = await fetch(shareUrl, {
+        headers: {
+          "User-Agent": MOBILE_UA,
+          "Accept-Language": "zh-CN,zh;q=0.9",
+        },
+        redirect: "follow",
+      });
+      if (!resp.ok) return null;
+
+      const html = await resp.text();
+      const item = extractRouterDataItem(html);
+      if (!item) {
+        console.warn(`[douyin] 分享页未解析到 _ROUTER_DATA item (status=${resp.status}, url=${resp.url})`);
+      }
+      return item ? mapItemToMeta(item) : null;
+    } catch (err) {
+      console.warn(`[douyin] 分享页 SSR 解析失败(${attempt}/3):`, err instanceof Error ? err.message : err);
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+    }
+  }
+
+  return null;
+}
+
+async function fetchViaMobileBrowser(videoId: string, source?: string): Promise<DouyinRawMeta | null> {
+  const { chromium } = await import("playwright");
+  const sourceUrl = source ? extractFirstUrl(source) : null;
+  const shareUrl = sourceUrl && /douyin\.com|iesdouyin\.com/i.test(sourceUrl)
+    ? sourceUrl
+    : `https://www.iesdouyin.com/share/video/${videoId}/`;
+  let browser: Browser | null = null;
+
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+    });
+    const context = await browser.newContext({
+      userAgent: MOBILE_UA,
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      locale: "zh-CN",
+      timezoneId: "Asia/Shanghai",
+    });
+    const page = await context.newPage();
+    await page.goto(shareUrl, { waitUntil: "domcontentloaded", timeout: 25_000 });
+    await page.waitForTimeout(1_500);
+
+    const html = await page.content();
+    const item = extractRouterDataItem(html);
+    await context.close().catch(() => {});
+    return item ? mapItemToMeta(item) : null;
+  } catch (err) {
+    console.warn("[douyin] 移动页 Playwright 解析失败:", err instanceof Error ? err.message : err);
+    return null;
+  } finally {
+    await browser?.close().catch(() => {});
+  }
+}
+
 function cookiesToNetscape(cookies: Cookie[]): string {
   const lines = ["# Netscape HTTP Cookie File", ""];
   for (const c of cookies) {
@@ -149,7 +353,7 @@ function cookiesToNetscape(cookies: Cookie[]): string {
 
 // ─── Core: Playwright + XHR Intercept ─────────────────────────────────────────
 
-async function fetchViaBrowser(videoId: string): Promise<DouyinRawMeta> {
+async function fetchViaBrowser(videoId: string, source?: string): Promise<DouyinRawMeta> {
   const { chromium } = await import("playwright");
 
   const browser: Browser = await chromium.launch({
@@ -176,7 +380,7 @@ async function fetchViaBrowser(videoId: string): Promise<DouyinRawMeta> {
     const page: Page = await context.newPage();
 
     // 拦截 aweme detail XHR —— 页面 JS 会带 a_bogus 签名发起此请求
-    page.on("response", async (resp: Response) => {
+    page.on("response", async (resp: PlaywrightResponse) => {
       if (captured) return;
       const url = resp.url();
       if (
@@ -240,12 +444,25 @@ async function fetchViaBrowser(videoId: string): Promise<DouyinRawMeta> {
       return mapItemToMeta(item);
     }
 
-    // 兜底：og:meta（无 videoUrl）
-    console.warn("[douyin] XHR 拦截未命中，尝试 og:meta 兜底");
+    const sharePageMeta = await fetchViaSharePage(videoId, source);
+    if (sharePageMeta) {
+      console.log(`[douyin] 分享页 SSR 解析成功: title="${sharePageMeta.title.slice(0, 40)}"`);
+      return sharePageMeta;
+    }
+
+    const html = await page.content().catch(() => "");
+    const routerDataItem = html ? extractRouterDataItem(html) : null;
+    if (routerDataItem) {
+      console.log(`[douyin] 页面 SSR 数据解析成功: title="${routerDataItem.desc?.slice(0, 40) || ''}"`);
+      return mapItemToMeta(routerDataItem);
+    }
+
+    // 兜底：meta/title（无 videoUrl）
+    console.warn("[douyin] XHR/SSR 均未命中，尝试 meta/title 兜底");
     const [title, description, coverUrl] = await Promise.all([
-      page.$eval('meta[property="og:title"]', (el) => el.getAttribute("content") || "").catch(() => ""),
-      page.$eval('meta[property="og:description"]', (el) => el.getAttribute("content") || "").catch(() => ""),
-      page.$eval('meta[property="og:image"]', (el) => el.getAttribute("content") || "").catch(() => ""),
+      page.title().catch(() => ""),
+      page.$eval('meta[property="og:description"], meta[name="description"]', (el) => el.getAttribute("content") || "").catch(() => ""),
+      page.$eval('meta[property="og:image"], img.poster', (el) => el.getAttribute("content") || el.getAttribute("src") || "").catch(() => ""),
     ]);
 
     return {
@@ -390,9 +607,10 @@ export async function downloadDouyinAudio(videoUrl: string): Promise<string> {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function getDouyinVideo(
-  videoIdOrUrl: string
+  videoIdOrUrl: string,
+  knownVideoId?: string
 ): Promise<PlatformVideoInfo> {
-  let videoId = extractDouyinId(videoIdOrUrl);
+  let videoId = knownVideoId || extractDouyinId(videoIdOrUrl);
   if (!videoId) {
     videoId = await resolveDouyinShortUrl(videoIdOrUrl);
     if (!videoId) {
@@ -400,7 +618,36 @@ export async function getDouyinVideo(
     }
   }
 
-  const meta = await fetchViaBrowser(videoId);
+  let meta = getCachedMeta(videoId);
+  if (!meta) {
+    let pending = pendingMetaFetches.get(videoId);
+    if (!pending) {
+      pending = (async () => {
+        const fetched =
+          await fetchViaSharePage(videoId, videoIdOrUrl) ||
+          await fetchViaMobileBrowser(videoId, videoIdOrUrl) ||
+          await fetchViaBrowser(videoId, videoIdOrUrl);
+        setCachedMeta(videoId, fetched);
+        return fetched;
+      })().finally(() => {
+        pendingMetaFetches.delete(videoId);
+      });
+      pendingMetaFetches.set(videoId, pending);
+    }
+    meta = await pending;
+  }
+
+  if (meta.title === "抖音视频" && !meta.description) {
+    const shareText = parseShareTextFallback(videoIdOrUrl);
+    if (shareText) {
+      meta = {
+        ...meta,
+        title: shareText.title,
+        description: shareText.description,
+        authorName: meta.authorName === "抖音用户" ? shareText.authorName : meta.authorName,
+      };
+    }
+  }
 
   if (!meta.videoUrl) {
     console.warn(`[douyin] 未能拿到视频直链 (id=${videoId})，下游转写可能失败`);

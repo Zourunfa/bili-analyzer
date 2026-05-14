@@ -16,8 +16,8 @@
 | 样式 | Tailwind CSS | 4.x | 原子化 CSS |
 | AI SDK | Vercel AI SDK (`ai`) | 6.x | 流式文本生成 |
 | AI 模型 | 通义千问 (qwen-plus) | — | DashScope 兼容 OpenAI 接口 |
-| 视频处理 | VideoCaptioner (Python CLI) | 1.4.1 | 语音转写回退方案 |
-| 部署 | PM2 + Nginx | — | 进程管理 + 反向代理 |
+| 视频处理 | VideoCaptioner (Pyth进程on CLI) | 1.4.1 | 语音转写回退方案 |
+| 部署 | PM2 + Nginx | — | 管理 + 反向代理 |
 
 ---
 

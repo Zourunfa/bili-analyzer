@@ -217,10 +217,21 @@ export async function persistCookies(set: BiliCookieSet): Promise<void> {
 
 export async function loadPersistedCookies(): Promise<void> {
   try {
+    const envCookieSet = readServerCookieSet();
+    const hasEnvSessdata = Boolean(envCookieSet.sessdata?.trim());
     const hasPersisted = existsSync(COOKIE_FILE_PATH);
     if (hasPersisted) {
       const raw = await readFile(COOKIE_FILE_PATH, "utf-8");
       const data = JSON.parse(raw) as BiliCookieSet;
+      if (hasEnvSessdata) {
+        applyCookieSet({
+          sessdata: envCookieSet.sessdata,
+          dedeUserId: envCookieSet.dedeUserId || data.dedeUserId,
+          biliJct: envCookieSet.biliJct || data.biliJct,
+        });
+        console.log("[bilibili-auth] Using environment SESSDATA with persisted cookie metadata");
+        return;
+      }
       applyCookieSet({
         sessdata: data.sessdata,
         dedeUserId: data.dedeUserId,
@@ -230,8 +241,7 @@ export async function loadPersistedCookies(): Promise<void> {
       return;
     }
 
-    const hasEnvCookie = process.env.BILIBILI_SESSDATA?.trim();
-    if (hasEnvCookie) {
+    if (hasEnvSessdata) {
       console.log("[bilibili-auth] No persisted cookie file, using environment cookies");
     }
   } catch (err) {
