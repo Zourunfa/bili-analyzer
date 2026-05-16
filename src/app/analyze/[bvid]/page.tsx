@@ -13,6 +13,7 @@ import {
   MessageOutlined,
   ArrowLeftOutlined,
   LoadingOutlined,
+  PauseCircleOutlined,
   SaveOutlined,
   BookOutlined,
   PlusOutlined,
@@ -27,6 +28,8 @@ import {
   CopyOutlined,
   ApartmentOutlined,
   SettingOutlined,
+  StopOutlined,
+  CaretRightOutlined,
 } from "@ant-design/icons";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -151,8 +154,14 @@ interface TimestampNoteItem {
   content: string;
 }
 
+type ChapterQueueControlState = "running" | "paused" | "stopped";
+
 const SELECTED_MODEL_STORAGE_KEY = "videonote:selected-model-id";
 const RUNTIME_MODEL_STORAGE_KEY = "videonote:runtime-model-config";
+const LS_BILIBILI_SESSDATA = "bilibili_sessdata";
+const LS_BILIBILI_DEDE_USERID = "bilibili_dede_userid";
+const LS_BILIBILI_BILI_JCT = "bilibili_bili_jct";
+const CHAPTER_QUEUE_CONTROL_PREFIX = "videonote:chapter-queue-control:";
 
 const RUNTIME_MODEL_PRESETS: RuntimeModelPreset[] = [
   {
@@ -239,6 +248,42 @@ function parseMmSsToSeconds(input: string): number | null {
   const s = Number(match[2]);
   if (!Number.isFinite(m) || !Number.isFinite(s) || s > 59) return null;
   return m * 60 + s;
+}
+
+function getBilibiliCookieHeaders(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const headers: Record<string, string> = {};
+  const sessdata = window.localStorage.getItem(LS_BILIBILI_SESSDATA);
+  const dedeUserId = window.localStorage.getItem(LS_BILIBILI_DEDE_USERID);
+  const biliJct = window.localStorage.getItem(LS_BILIBILI_BILI_JCT);
+  if (sessdata) headers["x-bilibili-sessdata"] = sessdata;
+  if (dedeUserId) headers["x-bilibili-dede-userid"] = dedeUserId;
+  if (biliJct) headers["x-bilibili-bili-jct"] = biliJct;
+  return headers;
+}
+
+function getChapterQueueControlKey(notebookId?: string | null): string {
+  return `${CHAPTER_QUEUE_CONTROL_PREFIX}${notebookId || "default"}`;
+}
+
+function readChapterQueueControl(notebookId?: string | null): ChapterQueueControlState {
+  if (typeof window === "undefined") return "running";
+  const saved = window.localStorage.getItem(getChapterQueueControlKey(notebookId));
+  return saved === "paused" || saved === "stopped" ? saved : "running";
+}
+
+function writeChapterQueueControl(notebookId: string | null | undefined, state: ChapterQueueControlState) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(getChapterQueueControlKey(notebookId), state);
+}
+
+function clearChapterQueueControl(notebookId?: string | null) {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(getChapterQueueControlKey(notebookId));
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
 }
 
 function formatSecondsToMmSs(sec: number): string {
@@ -419,6 +464,7 @@ export default function AnalyzePage() {
   const [runtimeModelConfig, setRuntimeModelConfig] = useState<RuntimeModelConfig | null>(null);
   const [modelConfigModalOpen, setModelConfigModalOpen] = useState(false);
   const [modelConfigProviderId, setModelConfigProviderId] = useState("minimax");
+  const [chapterQueueControl, setChapterQueueControl] = useState<ChapterQueueControlState>("running");
 
   // 顶部链接输入框
   const [headerUrl, setHeaderUrl] = useState("");
@@ -461,6 +507,7 @@ export default function AnalyzePage() {
 
       hide();
       message.success("章节合集笔记本已创建，开始按顺序解析");
+      writeChapterQueueControl(notebookData.notebook.id, "running");
       const params = new URLSearchParams();
       params.set("platform", "bilibili");
       params.set("cid", String(firstPage.cid));
@@ -528,12 +575,41 @@ export default function AnalyzePage() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const chapterQueueAdvanceRef = useRef<string | null>(null);
   const notebookResumePromptRef = useRef<string | null>(null);
+  const chapterQueueControlRef = useRef<ChapterQueueControlState>("running");
+  const chapterQueueAbortRef = useRef<AbortController | null>(null);
+  const chapterQueueNextTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth <= 900);
     checkMobile();
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
+  }, []);
+
+  useEffect(() => {
+    if (!isChapterQueue) {
+      setChapterQueueControl("running");
+      chapterQueueControlRef.current = "running";
+      return;
+    }
+    const saved = readChapterQueueControl(notebookIdFromQueue);
+    setChapterQueueControl(saved);
+    chapterQueueControlRef.current = saved;
+  }, [isChapterQueue, notebookIdFromQueue, storageBvid]);
+
+  useEffect(() => {
+    chapterQueueControlRef.current = chapterQueueControl;
+  }, [chapterQueueControl]);
+
+  useEffect(() => {
+    return () => {
+      if (chapterQueueNextTimerRef.current) {
+        window.clearTimeout(chapterQueueNextTimerRef.current);
+        chapterQueueNextTimerRef.current = null;
+      }
+      chapterQueueAbortRef.current?.abort();
+      chapterQueueAbortRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -845,6 +921,7 @@ export default function AnalyzePage() {
         cancelText: "暂不解析",
         centered: true,
         onOk: () => {
+          writeChapterQueueControl(notebookId, "running");
           const params = new URLSearchParams();
           params.set("platform", "bilibili");
           params.set("cid", String(firstMissing.cid));
@@ -984,18 +1061,79 @@ export default function AnalyzePage() {
     return currentIndex >= 0 ? pages[currentIndex + 1] : undefined;
   };
 
+  const updateChapterQueueControl = (state: ChapterQueueControlState) => {
+    if (!isChapterQueue) return;
+    setChapterQueueControl(state);
+    chapterQueueControlRef.current = state;
+    writeChapterQueueControl(notebookIdFromQueue, state);
+  };
+
+  const pauseChapterQueue = () => {
+    updateChapterQueueControl("paused");
+    if (chapterQueueNextTimerRef.current) {
+      window.clearTimeout(chapterQueueNextTimerRef.current);
+      chapterQueueNextTimerRef.current = null;
+    }
+    message.info("章节队列已暂停，当前章节会保留在本页");
+  };
+
+  const resumeChapterQueue = () => {
+    updateChapterQueueControl("running");
+    const info = videoInfoRef.current;
+    if (info && currentVideoId && !summaryLoading && !transcribing) {
+      message.info("继续解析下一章节");
+      goToNextChapter(info);
+    } else {
+      message.success("章节队列已继续");
+    }
+  };
+
+  const stopChapterQueue = () => {
+    updateChapterQueueControl("stopped");
+    if (chapterQueueNextTimerRef.current) {
+      window.clearTimeout(chapterQueueNextTimerRef.current);
+      chapterQueueNextTimerRef.current = null;
+    }
+    chapterQueueAbortRef.current?.abort();
+    chapterQueueAbortRef.current = null;
+    setTranscribing(false);
+    setSummaryLoading(false);
+    setTranscribeStep("章节队列已停止");
+    message.info("章节队列已停止");
+  };
+
   const goToNextChapter = (info: VideoInfo) => {
     if (!notebookIdFromQueue) return;
     const queueNotebookId = notebookIdFromQueue;
     const nextPage = getNextChapterPage(info);
     if (!nextPage) {
+      clearChapterQueueControl(queueNotebookId);
+      setChapterQueueControl("running");
+      chapterQueueControlRef.current = "running";
       message.success("全部章节解析完成，已保存到章节合集笔记本");
       refreshHistory();
       return;
     }
 
+    if (chapterQueueControlRef.current === "stopped") {
+      message.info("章节队列已停止");
+      refreshHistory();
+      return;
+    }
+
+    if (chapterQueueControlRef.current === "paused") {
+      message.info(`章节队列已暂停，P${chapterPage} 已保存`);
+      refreshHistory();
+      return;
+    }
+
     message.info(`P${chapterPage} 已保存，稍后开始解析 P${nextPage.page}`);
-    window.setTimeout(() => {
+    chapterQueueNextTimerRef.current = window.setTimeout(() => {
+      chapterQueueNextTimerRef.current = null;
+      if (chapterQueueControlRef.current !== "running") {
+        message.info(chapterQueueControlRef.current === "paused" ? "章节队列已暂停" : "章节队列已停止");
+        return;
+      }
       const params = new URLSearchParams();
       params.set("platform", "bilibili");
       params.set("cid", String(nextPage.cid));
@@ -1078,7 +1216,7 @@ export default function AnalyzePage() {
   };
 
   // 生成 AI 摘要（流式），返回最终的摘要文本
-  const generateSummary = async (text: string): Promise<string> => {
+  const generateSummary = async (text: string, signal?: AbortSignal): Promise<string> => {
     setSummaryLoading(true);
     let result = "";
     try {
@@ -1090,6 +1228,7 @@ export default function AnalyzePage() {
           modelId: selectedRuntimeModelConfig ? undefined : selectedModelId || undefined,
           modelConfig: modelRequestConfig,
         }),
+        signal,
       });
       if (!sumRes.ok) {
         setError("生成摘要失败");
@@ -1100,6 +1239,7 @@ export default function AnalyzePage() {
       if (reader) {
         let sseBuffer = "";
         while (true) {
+          if (signal?.aborted) break;
           const { done, value } = await reader.read();
           if (done) break;
           sseBuffer += decoder.decode(value, { stream: true });
@@ -1110,6 +1250,7 @@ export default function AnalyzePage() {
             try {
               const event = JSON.parse(line.slice(6));
               if (event.type === "text") {
+                if (signal?.aborted) break;
                 result += event.content;
                 setSummary(result);
               } else if (event.type === "error") {
@@ -1119,8 +1260,10 @@ export default function AnalyzePage() {
           }
         }
       }
-    } catch {
-      setError("生成摘要失败");
+    } catch (err) {
+      if (!isAbortError(err)) {
+        setError("生成摘要失败");
+      }
     } finally {
       setSummaryLoading(false);
     }
@@ -1132,6 +1275,12 @@ export default function AnalyzePage() {
     if (!bvid || isHistoryMode) return;
 
     let cancelled = false;
+    const controller = new AbortController();
+    const signal = controller.signal;
+    if (isChapterQueue) {
+      chapterQueueAbortRef.current?.abort();
+      chapterQueueAbortRef.current = controller;
+    }
     setCurrentVideoId(null);
     setMessages([]);
     setSubtitleText("");
@@ -1139,9 +1288,14 @@ export default function AnalyzePage() {
     setError("");
 
     (async () => {
+      if (isChapterQueue && chapterQueueControlRef.current === "stopped") {
+        setTranscribeStep("章节队列已停止");
+        return;
+      }
+
       // 先查数据库，看是否已有完整的分析数据
       try {
-        const dbRes = await fetch(`/api/videos?bvid=${storageBvid}`);
+        const dbRes = await fetch(`/api/videos?bvid=${storageBvid}`, { signal });
         if (dbRes.ok && !cancelled) {
           const dbData = await dbRes.json();
           if (dbData.video && dbData.video.subtitleText) {
@@ -1169,13 +1323,17 @@ export default function AnalyzePage() {
             await loadChatHistory(v.id);
             // 如果没有摘要但有字幕，触发摘要生成
             if (!v.summary && v.subtitleText) {
-              const summaryText = await generateSummary(v.subtitleText);
+              const summaryText = await generateSummary(v.subtitleText, signal);
+              if (cancelled || signal.aborted) return;
               autoSaveVideo(videoInfoRef.current!, v.subtitleText, v.subtitleSource || "cc", summaryText);
             }
             return; // 数据库数据加载完毕，无需再走在线流程
           }
         }
-      } catch { /* 查库失败，继续走在线流程 */ }
+      } catch (err) {
+        if (signal.aborted || isAbortError(err)) return;
+        /* 查库失败，继续走在线流程 */
+      }
 
       if (cancelled) return;
 
@@ -1188,6 +1346,7 @@ export default function AnalyzePage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url: platform === "bilibili" ? bvid : sourceUrl || bvid }),
+          signal,
         });
         const rawData = await infoRes.json() as VideoApiData;
         infoData = rawData;
@@ -1200,7 +1359,8 @@ export default function AnalyzePage() {
           setVideoInfo(vid);
           videoInfoRef.current = vid;
         }
-      } catch {
+      } catch (err) {
+        if (signal.aborted || isAbortError(err)) return;
         setError("获取视频信息失败");
         return;
       }
@@ -1221,10 +1381,12 @@ export default function AnalyzePage() {
           setDownloadProgress(0);
           setDownloadSize("");
 
+          const bilibiliCookieHeaders = getBilibiliCookieHeaders();
           const subRes = await fetch("/api/subtitle", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...bilibiliCookieHeaders },
             body: JSON.stringify({ bvid, cid: Number(cid), skipTranscribeFallback: true }),
+            signal,
           });
           const subData = await subRes.json();
           if (subData.error) {
@@ -1239,7 +1401,8 @@ export default function AnalyzePage() {
           if (subData.subtitleSource === "cc") {
             setTranscribing(false);
             setSubtitleText(subData.text);
-            const summaryText = await generateSummary(subData.text);
+            const summaryText = await generateSummary(subData.text, signal);
+            if (cancelled || signal.aborted) return;
             autoSaveVideo(videoInfoRef.current!, subData.text, "cc", summaryText);
             return;
           }
@@ -1247,7 +1410,8 @@ export default function AnalyzePage() {
           if (subData.subtitleSource === "transcribed") {
             setTranscribing(false);
             setSubtitleText(subData.text);
-            const summaryText = await generateSummary(subData.text);
+            const summaryText = await generateSummary(subData.text, signal);
+            if (cancelled || signal.aborted) return;
             autoSaveVideo(videoInfoRef.current!, subData.text, "transcribed", summaryText);
             return;
           }
@@ -1258,8 +1422,9 @@ export default function AnalyzePage() {
 
             const transRes = await fetch("/api/transcribe", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: { "Content-Type": "application/json", ...bilibiliCookieHeaders },
               body: JSON.stringify({ bvid, cid: Number(cid) }),
+              signal,
             });
 
             const reader = transRes.body?.getReader();
@@ -1268,6 +1433,7 @@ export default function AnalyzePage() {
 
             if (reader) {
               while (true) {
+                if (cancelled || signal.aborted) return;
                 const { done, value } = await reader.read();
                 if (done) break;
                 sseBuffer += decoder.decode(value, { stream: true });
@@ -1299,7 +1465,8 @@ export default function AnalyzePage() {
                       setTranscribeVisualProgress(96);
                       setSubtitleText(transData.text);
                       setTranscribing(false);
-                      const summaryText = await generateSummary(transData.text);
+                      const summaryText = await generateSummary(transData.text, signal);
+                      if (cancelled || signal.aborted) return;
                       autoSaveVideo(videoInfoRef.current!, transData.text, "transcribe", summaryText);
                     }
                   } catch { /* skip invalid JSON */ }
@@ -1308,6 +1475,7 @@ export default function AnalyzePage() {
             }
           }
         } catch (err) {
+          if (signal.aborted || isAbortError(err)) return;
           const message = err instanceof Error ? err.message : "处理失败，请重试";
           if (!handleChapterQueueFailure(message)) {
             setError(message);
@@ -1328,6 +1496,7 @@ export default function AnalyzePage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ videoUrl, platform }),
+          signal,
         });
 
         const reader = transRes.body?.getReader();
@@ -1336,6 +1505,7 @@ export default function AnalyzePage() {
 
         if (reader) {
           while (true) {
+            if (cancelled || signal.aborted) return;
             const { done, value } = await reader.read();
             if (done) break;
             sseBuffer += decoder.decode(value, { stream: true });
@@ -1370,7 +1540,8 @@ export default function AnalyzePage() {
                   setTranscribeVisualProgress(96);
                   setSubtitleText(transData.text);
                   setTranscribing(false);
-                  const summaryText = await generateSummary(transData.text);
+                  const summaryText = await generateSummary(transData.text, signal);
+                  if (cancelled || signal.aborted) return;
                   autoSaveVideo(videoInfoRef.current!, transData.text, "transcribe", summaryText);
                 }
               } catch { /* skip invalid JSON */ }
@@ -1393,9 +1564,11 @@ export default function AnalyzePage() {
         setTranscribeStep("正在基于视频描述生成摘要...");
         setSubtitleText(fallbackText);
         try {
-          const summaryText = await generateSummary(fallbackText);
+          const summaryText = await generateSummary(fallbackText, signal);
+          if (cancelled || signal.aborted) return;
           await autoSaveVideo(videoInfoRef.current!, fallbackText, "description", summaryText);
-        } catch {
+        } catch (err) {
+          if (signal.aborted || isAbortError(err)) return;
           setError("生成摘要失败");
         } finally {
           setSummaryLoading(false);
@@ -1403,7 +1576,13 @@ export default function AnalyzePage() {
       }
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      controller.abort();
+      if (chapterQueueAbortRef.current === controller) {
+        chapterQueueAbortRef.current = null;
+      }
+    };
   }, [bvid, cid]);
 
   const handleChat = useCallback(
@@ -2152,6 +2331,48 @@ export default function AnalyzePage() {
     />
   );
 
+  const chapterQueueControlsNode = isChapterQueue ? (
+    <div className="chapter-queue-controls">
+      <Space wrap>
+        {chapterQueueControl === "paused" ? (
+          <Button
+            size="small"
+            type="primary"
+            icon={<CaretRightOutlined />}
+            onClick={resumeChapterQueue}
+          >
+            继续
+          </Button>
+        ) : (
+          <Button
+            size="small"
+            icon={<PauseCircleOutlined />}
+            onClick={pauseChapterQueue}
+            disabled={chapterQueueControl === "stopped"}
+          >
+            暂停
+          </Button>
+        )}
+        <Button
+          size="small"
+          danger
+          icon={<StopOutlined />}
+          onClick={stopChapterQueue}
+          disabled={chapterQueueControl === "stopped"}
+        >
+          停止
+        </Button>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {chapterQueueControl === "paused"
+            ? "已暂停"
+            : chapterQueueControl === "stopped"
+              ? "已停止"
+              : `正在解析 P${chapterPage}`}
+        </Text>
+      </Space>
+    </div>
+  ) : null;
+
   // 错误兜底渲染：必须放在所有 hook 之后，避免 Rules of Hooks 违例
   if (error) {
     return (
@@ -2374,6 +2595,7 @@ export default function AnalyzePage() {
                             <div className="transcribe-progress-subtitle">
                               {transcribeStep || "正在准备转写任务..."}
                             </div>
+                            {chapterQueueControlsNode}
                             <div className="transcribe-wave" aria-hidden="true">
                               {Array.from({ length: 22 }).map((_, index) => (
                                 <span key={index} style={{ animationDelay: `${index * 0.06}s` }} />
@@ -2417,6 +2639,7 @@ export default function AnalyzePage() {
                       )
                     ) : (
                       <>
+                        {chapterQueueControlsNode}
                         <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
                           <Button
                             size="small"
@@ -3162,6 +3385,12 @@ export default function AnalyzePage() {
           color: var(--muted-foreground);
           font-size: 14px;
           min-height: 22px;
+          position: relative;
+        }
+        .chapter-queue-controls {
+          margin: 14px 0 2px;
+          display: flex;
+          justify-content: center;
           position: relative;
         }
         .transcribe-wave {

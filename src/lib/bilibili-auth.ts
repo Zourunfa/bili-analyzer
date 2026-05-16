@@ -62,6 +62,51 @@ export function readServerCookieSet(): BiliCookieSet {
   };
 }
 
+export function readClientCookieSet(headers: Headers): BiliCookieSet {
+  return {
+    sessdata: headers.get("x-bilibili-sessdata") || undefined,
+    dedeUserId: headers.get("x-bilibili-dede-userid") || undefined,
+    biliJct: headers.get("x-bilibili-bili-jct") || undefined,
+  };
+}
+
+export async function resolveCookieSetFromHeaders(headers: Headers): Promise<{
+  cookieSet: BiliCookieSet;
+  clientStatus?: BiliCookieVerifyStatus;
+  clientReason?: string;
+  usingClientCookies: boolean;
+}> {
+  const serverCookies = readServerCookieSet();
+  const clientCookies = readClientCookieSet(headers);
+  if (!clientCookies.sessdata?.trim()) {
+    return { cookieSet: serverCookies, usingClientCookies: false };
+  }
+
+  const verifyResult = await verifyCookieSetDetailed(clientCookies);
+  if (verifyResult.status === "invalid") {
+    return {
+      cookieSet: serverCookies,
+      clientStatus: verifyResult.status,
+      clientReason: verifyResult.reason,
+      usingClientCookies: false,
+    };
+  }
+
+  if (verifyResult.status === "unknown") {
+    console.warn(
+      "[bilibili-auth] 客户端 SESSDATA 校验状态未知，继续使用客户端 cookie:",
+      verifyResult.reason || "unknown"
+    );
+  }
+
+  return {
+    cookieSet: clientCookies,
+    clientStatus: verifyResult.status,
+    clientReason: verifyResult.reason,
+    usingClientCookies: true,
+  };
+}
+
 export function getScopedCookieSet(): BiliCookieSet | null {
   return cookieContextStore.getStore() ?? null;
 }
@@ -224,12 +269,32 @@ export async function loadPersistedCookies(): Promise<void> {
       const raw = await readFile(COOKIE_FILE_PATH, "utf-8");
       const data = JSON.parse(raw) as BiliCookieSet;
       if (hasEnvSessdata) {
+        const envVerify = await verifyCookieSetDetailed(envCookieSet);
+        if (envVerify.status === "invalid" && data.sessdata?.trim()) {
+          applyCookieSet({
+            sessdata: data.sessdata,
+            dedeUserId: data.dedeUserId,
+            biliJct: data.biliJct,
+          });
+          console.warn(
+            "[bilibili-auth] Environment SESSDATA is invalid, loaded persisted cookies instead:",
+            envVerify.reason || "unknown"
+          );
+          return;
+        }
         applyCookieSet({
           sessdata: envCookieSet.sessdata,
           dedeUserId: envCookieSet.dedeUserId || data.dedeUserId,
           biliJct: envCookieSet.biliJct || data.biliJct,
         });
-        console.log("[bilibili-auth] Using environment SESSDATA with persisted cookie metadata");
+        if (envVerify.status === "unknown") {
+          console.warn(
+            "[bilibili-auth] Environment SESSDATA verification is unknown, keeping environment cookies:",
+            envVerify.reason || "unknown"
+          );
+        } else {
+          console.log("[bilibili-auth] Using environment SESSDATA with persisted cookie metadata");
+        }
         return;
       }
       applyCookieSet({

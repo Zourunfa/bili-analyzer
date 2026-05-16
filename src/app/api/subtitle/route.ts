@@ -10,6 +10,7 @@ import {
   cleanup,
 } from "@/lib/videocaptioner";
 import { acquireTranscribeSlot } from "@/lib/transcribe-guard";
+import { resolveCookieSetFromHeaders, runWithCookieSet } from "@/lib/bilibili-auth";
 
 function isExplicitNoSubtitleError(message: string): boolean {
   const normalized = message.toLowerCase();
@@ -39,6 +40,8 @@ export async function POST(req: NextRequest) {
   let releaseSlot: (() => void) | undefined;
 
   try {
+    const { cookieSet, clientStatus, clientReason, usingClientCookies } =
+      await resolveCookieSetFromHeaders(req.headers);
     const { bvid, cid, skipTranscribeFallback } = await req.json();
 
     if (!bvid || !cid) {
@@ -51,9 +54,16 @@ export async function POST(req: NextRequest) {
     console.log(`[subtitle] bvid=${bvid}, cid=${cid}`);
 
     // SESSDATA 只用于优先获取 CC 字幕；缺失时仍尽量走匿名音频转写兜底。
-    if (!process.env.BILIBILI_SESSDATA) {
+    if (!cookieSet.sessdata?.trim()) {
       console.warn("[subtitle] 未配置 BILIBILI_SESSDATA，将尝试匿名字幕/音频转写");
     }
+    if (clientStatus === "invalid" && !cookieSet.sessdata?.trim()) {
+      return NextResponse.json(
+        { error: `客户端 SESSDATA 已失效${clientReason ? `：${clientReason}` : ""}。请重新扫码登录或更新 BILIBILI_SESSDATA。` },
+        { status: 401 }
+      );
+    }
+    console.log(`[subtitle] B站请求使用 ${usingClientCookies ? "client" : "server"} cookie`);
 
     // 优先尝试 CC 字幕
     let subtitleSource: "cc" | "transcribed" | "none" = "none";
@@ -61,7 +71,7 @@ export async function POST(req: NextRequest) {
     let text = "";
 
     try {
-      const raw = await getSubtitle(bvid, cid);
+      const raw = await runWithCookieSet(cookieSet, () => getSubtitle(bvid, cid));
       subtitles = Array.isArray(raw) ? raw : [];
       text = subtitleToText(raw as Parameters<typeof subtitleToText>[0]);
       if (text.trim()) {
@@ -95,7 +105,7 @@ export async function POST(req: NextRequest) {
     if (subtitleSource !== "cc") {
       releaseSlot = await acquireTranscribeSlot();
       console.log("[subtitle] 正在下载音频并转写...");
-      audioPath = await downloadAudioViaApi(bvid, cid);
+      audioPath = await runWithCookieSet(cookieSet, () => downloadAudioViaApi(bvid, cid));
       workDir = audioPath.slice(0, Math.max(0, audioPath.lastIndexOf("/")));
 
       const srtText = await transcribeAudio(audioPath);

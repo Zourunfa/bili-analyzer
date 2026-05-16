@@ -2,8 +2,11 @@ import { NextRequest } from "next/server";
 import { downloadAudioViaApi, subtitleToText } from "@/lib/bilibili";
 import { transcribeAudio, parseSrt, cleanup, downloadAudioFromUrl } from "@/lib/videocaptioner";
 import { acquireTranscribeSlot, getTranscribeLoad } from "@/lib/transcribe-guard";
+import { resolveCookieSetFromHeaders, runWithCookieSet } from "@/lib/bilibili-auth";
 
 export async function POST(req: NextRequest) {
+  const { cookieSet, clientStatus, clientReason, usingClientCookies } =
+    await resolveCookieSetFromHeaders(req.headers);
   const body = await req.json();
   const { bvid, cid, videoUrl, platform } = body;
 
@@ -50,9 +53,21 @@ export async function POST(req: NextRequest) {
         send({ type: "status", message: `正在从 ${platformLabel} 下载音频...` });
 
         if (isBilibili) {
-          audioPath = await downloadAudioViaApi(bvid, Number(cid), (percent, downloaded, total) => {
-            send({ type: "progress", percent, downloaded, total });
-          });
+          if (clientStatus === "invalid" && !cookieSet.sessdata?.trim()) {
+            send({
+              type: "error",
+              error: `客户端 SESSDATA 已失效${clientReason ? `：${clientReason}` : ""}。请重新扫码登录或更新 BILIBILI_SESSDATA。`,
+            });
+            return;
+          }
+          console.log(
+            `[transcribe] B站音频下载使用 ${usingClientCookies ? "client" : "server"} cookie`
+          );
+          audioPath = await runWithCookieSet(cookieSet, () =>
+            downloadAudioViaApi(bvid, Number(cid), (percent, downloaded, total) => {
+              send({ type: "progress", percent, downloaded, total });
+            })
+          );
         } else {
           // 多平台音频下载
           if (platform === "douyin" && videoUrl) {

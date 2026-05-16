@@ -735,9 +735,10 @@ type PlayurlResponse = {
 async function buildPlayurlHeaders(): Promise<Record<string, string>> {
   const anon = await getAnonymousCookies();
   const shouldUseAccountCookies = cachedLoginStatus !== false;
-  const sessdata = shouldUseAccountCookies ? normalizeSessdata(process.env.BILIBILI_SESSDATA || "") : "";
-  const dedeUserId = shouldUseAccountCookies ? (process.env.BILIBILI_DEDE_USERID || "").trim() : "";
-  const biliJct = shouldUseAccountCookies ? (process.env.BILIBILI_BILI_JCT || "").trim() : "";
+  const active = getActiveCookieSet();
+  const sessdata = shouldUseAccountCookies ? active.sessdata : "";
+  const dedeUserId = shouldUseAccountCookies ? active.dedeUserId : "";
+  const biliJct = shouldUseAccountCookies ? active.biliJct : "";
 
   const cookieParts: string[] = [];
   if (anon) cookieParts.push(anon);
