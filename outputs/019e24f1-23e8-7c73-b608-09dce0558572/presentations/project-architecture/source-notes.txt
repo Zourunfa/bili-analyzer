@@ -1,0 +1,10 @@
+Source files inspected:
+- TECHNICAL.md
+- docs/STANDALONE_DEPLOYMENT.md
+- README.md
+- prisma/schema.prisma
+- src/lib/platform.ts, llm.ts, db.ts, auth.ts
+- src/app API route inventory
+
+Task mode: create
+Deck profile: engineering-platform

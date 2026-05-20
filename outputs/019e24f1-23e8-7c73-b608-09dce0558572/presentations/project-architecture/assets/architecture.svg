@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<defs>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+    <path d="M2,2 L10,6 L2,10 z" fill="#183B56"/>
+  </marker>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0F172A" flood-opacity="0.12"/>
+  </filter>
+</defs>
+<style>
+  .title{font:700 40px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#172026}
+  .subtitle{font:400 20px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#5E6B73}
+  .boxTitle{font:700 22px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif}
+  .boxLine{font:400 17px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#5E6B73}
+  .group{font:700 17px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#183B56; letter-spacing:.4px}
+  .small{font:400 15px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#5E6B73}
+  .arrowLabel{font:600 14px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#183B56}
+</style>
+<rect width="1600" height="900" fill="#F7FAFC"/>
+<text x="64" y="66" class="title">项目总体架构图</text>
+<text x="64" y="100" class="subtitle">Bilibili Subtitle Analyzer / VideoNote：多平台视频解析、字幕转写、AI 摘要与知识管理</text>
+
+  <text x="80" y="148" class="group">用户与前端体验</text>
+  <text x="382" y="148" class="group">Next.js BFF / API Routes</text>
+  <text x="780" y="148" class="group">领域服务与任务编排</text>
+  <text x="1158" y="148" class="group">外部依赖与持久化</text>
+  
+  <rect x="70" y="170" width="240" height="142" rx="16" fill="#EAF3FF" stroke="#8BBDF7" stroke-width="2"/>
+  <text x="190" y="202" text-anchor="middle" class="boxTitle" fill="#172026">Web Client</text>
+<text x="88" y="244" class="boxLine">首页 / 分析页 / 笔记本</text>
+<text x="88" y="265" class="boxLine">搜索 / UP 主分析</text>
+<text x="88" y="286" class="boxLine">React 19 + Ant Design</text>
+  
+  <rect x="360" y="170" width="300" height="142" rx="16" fill="#FFFFFF" stroke="#B7C4CE" stroke-width="2"/>
+  <text x="510" y="202" text-anchor="middle" class="boxTitle" fill="#172026">API BFF 层</text>
+<text x="378" y="244" class="boxLine">/api/video-info</text>
+<text x="378" y="265" class="boxLine">/api/subtitle / transcribe</text>
+<text x="378" y="286" class="boxLine">/api/summarize / chat</text>
+<text x="378" y="307" class="boxLine">/api/videos / notebooks</text>
+  
+  <rect x="750" y="170" width="282" height="142" rx="16" fill="#E7FAF7" stroke="#72D6CB" stroke-width="2"/>
+  <text x="891" y="202" text-anchor="middle" class="boxTitle" fill="#172026">Platform Adapter</text>
+<text x="768" y="244" class="boxLine">platform.ts 统一入口</text>
+<text x="768" y="265" class="boxLine">bilibili / douyin / xiaohong</text>
+<text x="768" y="286" class="boxLine">shu</text>
+<text x="768" y="307" class="boxLine">短链解析 + 元信息抓取</text>
+  
+  <rect x="1120" y="160" width="190" height="120" rx="16" fill="#FFF4E5" stroke="#F2B15F" stroke-width="2"/>
+  <text x="1215" y="192" text-anchor="middle" class="boxTitle" fill="#172026">内容平台</text>
+<text x="1138" y="234" class="boxLine">B站 API</text>
+<text x="1138" y="255" class="boxLine">抖音页面/XHR</text>
+<text x="1138" y="276" class="boxLine">小红书链接解析</text>
+  
+  <rect x="1346" y="160" width="180" height="120" rx="16" fill="#EAF7EE" stroke="#7CCB91" stroke-width="2"/>
+  <text x="1436" y="192" text-anchor="middle" class="boxTitle" fill="#172026">PostgreSQL</text>
+<text x="1364" y="234" class="boxLine">Prisma 7</text>
+<text x="1364" y="255" class="boxLine">用户/视频/知识库</text>
+<text x="1364" y="276" class="boxLine">pgvector embedding</text>
+  
+  <rect x="70" y="390" width="240" height="120" rx="16" fill="#F1EEFF" stroke="#A99CF0" stroke-width="2"/>
+  <text x="190" y="422" text-anchor="middle" class="boxTitle" fill="#172026">NextAuth</text>
+<text x="88" y="464" class="boxLine">邮箱密码登录</text>
+<text x="88" y="485" class="boxLine">JWT Session</text>
+<text x="88" y="506" class="boxLine">邮箱验证 token</text>
+  
+  <rect x="360" y="390" width="300" height="120" rx="16" fill="#EAF3FF" stroke="#8BBDF7" stroke-width="2"/>
+  <text x="510" y="422" text-anchor="middle" class="boxTitle" fill="#172026">AI Streaming APIs</text>
+<text x="378" y="464" class="boxLine">Vercel AI SDK streamText</text>
+<text x="378" y="485" class="boxLine">摘要 / 对话 / 知识提取</text>
+<text x="378" y="506" class="boxLine">模型可配置</text>
+  
+  <rect x="750" y="390" width="282" height="120" rx="16" fill="#FFFFFF" stroke="#B7C4CE" stroke-width="2"/>
+  <text x="891" y="422" text-anchor="middle" class="boxTitle" fill="#172026">Subtitle Pipeline</text>
+<text x="768" y="464" class="boxLine">CC 字幕优先</text>
+<text x="768" y="485" class="boxLine">无字幕走音频下载</text>
+<text x="768" y="506" class="boxLine">VideoCaptioner / SRT parse</text>
+  
+  <rect x="1120" y="350" width="190" height="120" rx="16" fill="#F1EEFF" stroke="#A99CF0" stroke-width="2"/>
+  <text x="1215" y="382" text-anchor="middle" class="boxTitle" fill="#172026">LLM Providers</text>
+<text x="1138" y="424" class="boxLine">DashScope/Qwen</text>
+<text x="1138" y="445" class="boxLine">DeepSeek/OpenAI/Kim</text>
+<text x="1138" y="466" class="boxLine">i</text>
+<text x="1138" y="487" class="boxLine">Anthropic/自定义</text>
+  
+  <rect x="1346" y="350" width="180" height="120" rx="16" fill="#FFFFFF" stroke="#B7C4CE" stroke-width="2"/>
+  <text x="1436" y="382" text-anchor="middle" class="boxTitle" fill="#172026">文件系统</text>
+<text x="1364" y="424" class="boxLine">/tmp/bilibili-subt</text>
+<text x="1364" y="445" class="boxLine">itle</text>
+<text x="1364" y="466" class="boxLine">临时音频/SRT</text>
+<text x="1364" y="487" class="boxLine">cookie 持久化</text>
+  
+  <rect x="360" y="610" width="300" height="116" rx="16" fill="#EAF7EE" stroke="#7CCB91" stroke-width="2"/>
+  <text x="510" y="642" text-anchor="middle" class="boxTitle" fill="#172026">Search / Knowledge</text>
+<text x="378" y="684" class="boxLine">字幕全文检索</text>
+<text x="378" y="705" class="boxLine">知识点抽取</text>
+<text x="378" y="726" class="boxLine">笔记本聚合</text>
+  
+  <rect x="750" y="610" width="282" height="116" rx="16" fill="#FFF4E5" stroke="#F2B15F" stroke-width="2"/>
+  <text x="891" y="642" text-anchor="middle" class="boxTitle" fill="#172026">Deploy Runtime</text>
+<text x="768" y="684" class="boxLine">local Docker build</text>
+<text x="768" y="705" class="boxLine">.next/standalone release</text>
+<text x="768" y="726" class="boxLine">PM2 + Nginx</text>
+  
+  <line x1="310" y1="240" x2="360" y2="240" stroke="#183B56" stroke-width="3"  marker-end="url(#arrow)"/>
+  <rect x="253" y="214" width="164" height="28" rx="14" fill="#fff" stroke="#B7C4CE"/><text x="335" y="234" text-anchor="middle" class="arrowLabel">HTTP / UI action</text>
+  
+  <line x1="660" y1="240" x2="750" y2="240" stroke="#183B56" stroke-width="3"  marker-end="url(#arrow)"/>
+  <rect x="623" y="214" width="164" height="28" rx="14" fill="#fff" stroke="#B7C4CE"/><text x="705" y="234" text-anchor="middle" class="arrowLabel">route orchestration</text>
+  
+  <line x1="1032" y1="240" x2="1120" y2="220" stroke="#183B56" stroke-width="3"  marker-end="url(#arrow)"/>
+  <rect x="994" y="204" width="164" height="28" rx="14" fill="#fff" stroke="#B7C4CE"/><text x="1076" y="224" text-anchor="middle" class="arrowLabel">fetch metadata</text>
+  
+  <line x1="660" y1="440" x2="750" y2="440" stroke="#183B56" stroke-width="3"  marker-end="url(#arrow)"/>
+  <rect x="623" y="414" width="164" height="28" rx="14" fill="#fff" stroke="#B7C4CE"/><text x="705" y="434" text-anchor="middle" class="arrowLabel">subtitle fallback</text>
+  
+  <line x1="1032" y1="440" x2="1120" y2="410" stroke="#183B56" stroke-width="3"  marker-end="url(#arrow)"/>
+  <rect x="994" y="399" width="164" height="28" rx="14" fill="#fff" stroke="#B7C4CE"/><text x="1076" y="419" text-anchor="middle" class="arrowLabel">LLM stream</text>
+  
+  <line x1="660" y1="450" x2="1346" y2="220" stroke="#183B56" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
+  <rect x="921" y="309" width="164" height="28" rx="14" fill="#fff" stroke="#B7C4CE"/><text x="1003" y="329" text-anchor="middle" class="arrowLabel">Prisma read/write</text>
+  
+  <line x1="1032" y1="450" x2="1346" y2="410" stroke="#183B56" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
+  <rect x="1107" y="404" width="164" height="28" rx="14" fill="#fff" stroke="#B7C4CE"/><text x="1189" y="424" text-anchor="middle" class="arrowLabel">temp files</text>
+  
+  <line x1="660" y1="668" x2="1346" y2="245" stroke="#183B56" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)"/>
+  <rect x="921" y="430.5" width="164" height="28" rx="14" fill="#fff" stroke="#B7C4CE"/><text x="1003" y="450.5" text-anchor="middle" class="arrowLabel">knowledge/query data</text>
+  <rect x="70" y="790" width="1456" height="54" rx="16" fill="#FFFFFF" stroke="#B7C4CE"/>
+  <text x="92" y="824" class="small">核心判断：这是一个 Next.js BFF 型全栈应用，前端体验、API 编排、平台适配、AI 流式能力和 PostgreSQL 知识沉淀都在同一代码库内闭环。</text>
+</svg>

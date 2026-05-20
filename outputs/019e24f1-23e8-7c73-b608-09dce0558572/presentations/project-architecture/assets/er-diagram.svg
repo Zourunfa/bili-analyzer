@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+<defs>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+    <path d="M2,2 L10,6 L2,10 z" fill="#183B56"/>
+  </marker>
+  <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#0F172A" flood-opacity="0.12"/>
+  </filter>
+</defs>
+<style>
+  .title{font:700 40px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#172026}
+  .subtitle{font:400 20px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#5E6B73}
+  .boxTitle{font:700 22px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif}
+  .boxLine{font:400 17px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#5E6B73}
+  .group{font:700 17px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#183B56; letter-spacing:.4px}
+  .small{font:400 15px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#5E6B73}
+  .arrowLabel{font:600 14px Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; fill:#183B56}
+</style>
+<rect width="1600" height="900" fill="#F7FAFC"/>
+<text x="64" y="66" class="title">ER 图</text>
+<text x="64" y="100" class="subtitle">实体关系与基数：用户、视频、笔记本、知识点、标签、聊天</text>
+
+  <line x1="310" y1="234" x2="386" y2="234" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="314" y="216" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="348" y="235" text-anchor="middle" class="arrowLabel">1:N</text>
+  <line x1="596" y1="234" x2="680" y2="234" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="604" y="216" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="638" y="235" text-anchor="middle" class="arrowLabel">N:1</text>
+  <line x1="190" y1="308" x2="190" y2="382" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="156" y="327" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="190" y="346" text-anchor="middle" class="arrowLabel">email</text>
+  <line x1="310" y1="210" x2="1040" y2="190" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="641" y="182" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="675" y="201" text-anchor="middle" class="arrowLabel">1:N</text>
+  <line x1="1270" y1="205" x2="1310" y2="200" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="1256" y="184.5" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="1290" y="203.5" text-anchor="middle" class="arrowLabel">1:N</text>
+  <line x1="1310" y1="228" x2="940" y2="238" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="1091" y="215" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="1125" y="234" text-anchor="middle" class="arrowLabel">N:1</text>
+  <line x1="940" y1="244" x2="1040" y2="408" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="956" y="308" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="990" y="327" text-anchor="middle" class="arrowLabel">1:N</text>
+  <line x1="1270" y1="408" x2="1310" y2="406" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="1256" y="389" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="1290" y="408" text-anchor="middle" class="arrowLabel">1:1</text>
+  <line x1="195" y1="610" x2="195" y2="308" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="161" y="441" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="195" y="460" text-anchor="middle" class="arrowLabel">user</text>
+  <line x1="320" y1="670" x2="680" y2="260" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="466" y="447" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="500" y="466" text-anchor="middle" class="arrowLabel">video</text>
+  <line x1="505" y1="610" x2="225" y2="308" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="331" y="441" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="365" y="460" text-anchor="middle" class="arrowLabel">user</text>
+  <line x1="615" y1="670" x2="690" y2="670" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="618.5" y="652" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="652.5" y="671" text-anchor="middle" class="arrowLabel">1:N</text>
+  <line x1="815" y1="610" x2="815" y2="324" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="781" y="449" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="815" y="468" text-anchor="middle" class="arrowLabel">video</text>
+  <line x1="940" y1="670" x2="1040" y2="670" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="956" y="652" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="990" y="671" text-anchor="middle" class="arrowLabel">chat</text>
+  <line x1="1160" y1="610" x2="885" y2="324" stroke="#183B56" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="988.5" y="449" width="68" height="26" rx="13" fill="#fff" stroke="#B7C4CE"/>
+  <text x="1022.5" y="468" text-anchor="middle" class="arrowLabel">video</text>
+  <rect x="70" y="160" width="240" height="148" rx="12" fill="#F1EEFF" stroke="#183B56" stroke-width="2"/>
+  <rect x="70" y="160" width="240" height="38" rx="12" fill="#183B56"/>
+  <text x="86" y="186" class="boxTitle" fill="#FFFFFF">users</text><text x="86" y="224" class="small">PK id</text><text x="86" y="245" class="small">email unique</text><text x="86" y="266" class="small">password hash</text><text x="86" y="287" class="small">email_verified_at</text>
+  <rect x="70" y="382" width="240" height="112" rx="12" fill="#FFFFFF" stroke="#183B56" stroke-width="2"/>
+  <rect x="70" y="382" width="240" height="38" rx="12" fill="#183B56"/>
+  <text x="86" y="408" class="boxTitle" fill="#FFFFFF">email_tokens</text><text x="86" y="446" class="small">PK id</text><text x="86" y="467" class="small">email index</text><text x="86" y="488" class="small">token unique</text>
+  <rect x="386" y="184" width="210" height="118" rx="12" fill="#FFFFFF" stroke="#183B56" stroke-width="2"/>
+  <rect x="386" y="184" width="210" height="38" rx="12" fill="#183B56"/>
+  <text x="402" y="210" class="boxTitle" fill="#FFFFFF">user_videos</text><text x="402" y="248" class="small">FK user_id</text><text x="402" y="269" class="small">FK video_id</text><text x="402" y="290" class="small">unique pair</text>
+  <rect x="680" y="160" width="260" height="164" rx="12" fill="#EAF3FF" stroke="#183B56" stroke-width="2"/>
+  <rect x="680" y="160" width="260" height="38" rx="12" fill="#183B56"/>
+  <text x="696" y="186" class="boxTitle" fill="#FFFFFF">videos</text><text x="696" y="224" class="small">PK id</text><text x="696" y="245" class="small">bvid unique</text><text x="696" y="266" class="small">title / cid / owner</text><text x="696" y="287" class="small">subtitle_text / summary</text>
+  <rect x="690" y="392" width="250" height="118" rx="12" fill="#FFFFFF" stroke="#183B56" stroke-width="2"/>
+  <rect x="690" y="392" width="250" height="38" rx="12" fill="#183B56"/>
+  <text x="706" y="418" class="boxTitle" fill="#FFFFFF">up_profiles</text><text x="706" y="456" class="small">PK id</text><text x="706" y="477" class="small">mid unique</text><text x="706" y="498" class="small">name / face / sign</text>
+  <rect x="1040" y="140" width="230" height="132" rx="12" fill="#EAF7EE" stroke="#183B56" stroke-width="2"/>
+  <rect x="1040" y="140" width="230" height="38" rx="12" fill="#183B56"/>
+  <text x="1056" y="166" class="boxTitle" fill="#FFFFFF">notebooks</text><text x="1056" y="204" class="small">PK id</text><text x="1056" y="225" class="small">FK user_id</text><text x="1056" y="246" class="small">title / tags[] / rule</text>
+  <rect x="1310" y="140" width="220" height="118" rx="12" fill="#FFFFFF" stroke="#183B56" stroke-width="2"/>
+  <rect x="1310" y="140" width="220" height="38" rx="12" fill="#183B56"/>
+  <text x="1326" y="166" class="boxTitle" fill="#FFFFFF">notebook_videos</text><text x="1326" y="204" class="small">FK notebook_id</text><text x="1326" y="225" class="small">FK video_id</text><text x="1326" y="246" class="small">unique pair</text>
+  <rect x="1040" y="340" width="230" height="140" rx="12" fill="#FFF4E5" stroke="#183B56" stroke-width="2"/>
+  <rect x="1040" y="340" width="230" height="38" rx="12" fill="#183B56"/>
+  <text x="1056" y="366" class="boxTitle" fill="#FFFFFF">knowledge_points</text><text x="1056" y="404" class="small">FK video_id</text><text x="1056" y="425" class="small">type / content</text><text x="1056" y="446" class="small">timestamp / metadata</text>
+  <rect x="1310" y="350" width="220" height="112" rx="12" fill="#FFFFFF" stroke="#183B56" stroke-width="2"/>
+  <rect x="1310" y="350" width="220" height="38" rx="12" fill="#183B56"/>
+  <text x="1326" y="376" class="boxTitle" fill="#FFFFFF">embeddings</text><text x="1326" y="414" class="small">FK knowledge_point_id</text><text x="1326" y="435" class="small">vector(1024)</text><text x="1326" y="456" class="small">1:1 knowledge</text>
+  <rect x="70" y="610" width="250" height="120" rx="12" fill="#FFFFFF" stroke="#183B56" stroke-width="2"/>
+  <rect x="70" y="610" width="250" height="38" rx="12" fill="#183B56"/>
+  <text x="86" y="636" class="boxTitle" fill="#FFFFFF">video_timestamp_notes</text><text x="86" y="674" class="small">FK user_id</text><text x="86" y="695" class="small">FK video_id</text><text x="86" y="716" class="small">timestamp_sec</text>
+  <rect x="395" y="610" width="220" height="120" rx="12" fill="#E7FAF7" stroke="#183B56" stroke-width="2"/>
+  <rect x="395" y="610" width="220" height="38" rx="12" fill="#183B56"/>
+  <text x="411" y="636" class="boxTitle" fill="#FFFFFF">video_tags</text><text x="411" y="674" class="small">FK user_id</text><text x="411" y="695" class="small">name unique per user</text><text x="411" y="716" class="small">color</text>
+  <rect x="690" y="610" width="250" height="120" rx="12" fill="#FFFFFF" stroke="#183B56" stroke-width="2"/>
+  <rect x="690" y="610" width="250" height="38" rx="12" fill="#183B56"/>
+  <text x="706" y="636" class="boxTitle" fill="#FFFFFF">video_tag_relations</text><text x="706" y="674" class="small">FK user_id</text><text x="706" y="695" class="small">FK video_id</text><text x="706" y="716" class="small">FK tag_id</text>
+  <rect x="1040" y="610" width="240" height="120" rx="12" fill="#FFFFFF" stroke="#183B56" stroke-width="2"/>
+  <rect x="1040" y="610" width="240" height="38" rx="12" fill="#183B56"/>
+  <text x="1056" y="636" class="boxTitle" fill="#FFFFFF">chat_messages</text><text x="1056" y="674" class="small">FK user_id</text><text x="1056" y="695" class="small">FK video_id</text><text x="1056" y="716" class="small">role/content</text>
+  <rect x="70" y="790" width="1450" height="54" rx="16" fill="#FFFFFF" stroke="#B7C4CE"/>
+  <text x="92" y="824" class="small">关系重点：videos 是内容资产中心，users 是权限与个性化中心；notebook_videos、user_videos、video_tag_relations 是三张主要关联表。</text>
+</svg>

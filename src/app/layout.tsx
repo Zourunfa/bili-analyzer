@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
-import AuthProvider from "@/components/AuthProvider";
-import Navbar from "@/components/Navbar";
-import { ConfigProvider, theme } from "antd";
+import AppProviders from "@/components/AppProviders";
 
 export const metadata: Metadata = {
   title: "视记 VideoNote - 视频学习知识管理平台",
@@ -15,32 +14,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className="h-full antialiased">
+    <html lang="zh-CN" className="h-full antialiased dark" suppressHydrationWarning>
       <body className="min-h-full flex flex-col">
-        <ConfigProvider
-          theme={{
-            algorithm: theme.darkAlgorithm,
-            token: {
-              colorPrimary: "#fb7299",
-              colorBgContainer: "#12122a",
-              colorBgElevated: "#1a1a36",
-              colorBgLayout: "#0a0a1a",
-              colorBorder: "#1e1e3a",
-              colorBorderSecondary: "#1e1e3a",
-              colorText: "#e4e4f0",
-              colorTextSecondary: "#8b8ba8",
-              colorTextTertiary: "#5b5b7d",
-              colorFillSecondary: "#1a1a36",
-              borderRadius: 8,
-              fontFamily: "'PingFang SC', 'Noto Sans SC', system-ui, -apple-system, sans-serif",
-            },
-          }}
-        >
-          <AuthProvider>
-            <Navbar />
-            <main style={{ flex: 1 }}>{children}</main>
-          </AuthProvider>
-        </ConfigProvider>
+        <AppProviders>{children}</AppProviders>
+        <Script id="videonote-theme-script" strategy="beforeInteractive">
+          {`(() => { try { const mode = localStorage.getItem("videonote-theme") || "dark"; const root = document.documentElement; root.classList.toggle("dark", mode !== "light"); root.classList.toggle("light", mode === "light"); root.style.colorScheme = mode === "light" ? "light" : "dark"; } catch (_) {} })();`}
+        </Script>
       </body>
     </html>
   );

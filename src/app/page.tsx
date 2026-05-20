@@ -292,7 +292,7 @@ export default function Home() {
           line-height: 1.6;
         }
         .home-search-card {
-          background: rgba(18, 18, 42, 0.6);
+          background: var(--soft-card);
           backdrop-filter: blur(20px);
           border: 1px solid var(--border);
           border-radius: 16px;

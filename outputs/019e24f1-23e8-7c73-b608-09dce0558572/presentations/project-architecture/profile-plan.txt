@@ -1,0 +1,5 @@
+task mode: create
+primary deck-profile: engineering-platform
+required proof objects: architecture diagram, deployment diagram, database table map, ER diagram, module boundary slide
+source/asset requirements: use repo source only; no external logos/assets
+QA gates: diagrams must use real route/module/table names; database tables must match Prisma schema

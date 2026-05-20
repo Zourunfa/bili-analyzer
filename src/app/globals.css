@@ -4,7 +4,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ===== DESIGN SYSTEM: "Deep Space Bilibili" ===== */
+/* ===== DESIGN SYSTEM: "VideoNote Day / Deep Space" ===== */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -51,13 +51,58 @@
 
 :root {
   /* Base */
+  --background: #f7f8fb;
+  --foreground: #202338;
+  --card: #ffffff;
+  --card-foreground: #202338;
+  --popover: #ffffff;
+  --popover-foreground: #202338;
+  /* Brand: Bilibili Pink */
+  --primary: #fb7299;
+  --primary-foreground: #ffffff;
+  --secondary: #eef2f8;
+  --secondary-foreground: #4d5468;
+  --muted: #eef2f8;
+  --muted-foreground: #6b7284;
+  --accent: #4cc9f0;
+  --accent-foreground: #ffffff;
+  --destructive: #ff4757;
+  --border: #e6e8f0;
+  --input: #e6e8f0;
+  --ring: #fb7299;
+  --navbar-bg: rgba(255, 255, 255, 0.86);
+  --hover-bg: rgba(31, 35, 56, 0.06);
+  --soft-card: rgba(255, 255, 255, 0.72);
+  --markdown-foreground: #34384d;
+  --markdown-muted: #6b7284;
+  --code-bg: rgba(251, 114, 153, 0.1);
+  --pre-bg: #eef2f8;
+  /* Radius */
+  --radius: 0.75rem;
+  /* Charts */
+  --chart-1: #fb7299;
+  --chart-2: #4cc9f0;
+  --chart-3: #a78bfa;
+  --chart-4: #34d399;
+  --chart-5: #fbbf24;
+  /* Sidebar */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #202338;
+  --sidebar-primary: #fb7299;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef2f8;
+  --sidebar-accent-foreground: #202338;
+  --sidebar-border: #e6e8f0;
+  --sidebar-ring: #fb7299;
+}
+
+.dark {
   --background: #0a0a1a;
   --foreground: #e4e4f0;
   --card: #12122a;
   --card-foreground: #e4e4f0;
   --popover: #16162e;
   --popover-foreground: #e4e4f0;
-  /* Brand: Bilibili Pink */
   --primary: #fb7299;
   --primary-foreground: #ffffff;
   --secondary: #1a1a36;
@@ -70,15 +115,18 @@
   --border: #1e1e3a;
   --input: #1e1e3a;
   --ring: #fb7299;
-  /* Radius */
-  --radius: 0.75rem;
-  /* Charts */
+  --navbar-bg: rgba(10, 10, 26, 0.8);
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --soft-card: rgba(18, 18, 42, 0.7);
+  --markdown-foreground: #c8c8e0;
+  --markdown-muted: #8b8bb0;
+  --code-bg: rgba(251, 114, 153, 0.1);
+  --pre-bg: #0e0e22;
   --chart-1: #fb7299;
   --chart-2: #4cc9f0;
   --chart-3: #a78bfa;
   --chart-4: #34d399;
   --chart-5: #fbbf24;
-  /* Sidebar */
   --sidebar: #0e0e22;
   --sidebar-foreground: #e4e4f0;
   --sidebar-primary: #fb7299;
@@ -122,7 +170,7 @@
 
 /* ===== GLASS CARD EFFECT ===== */
 .glass-card {
-  background: rgba(18, 18, 42, 0.7);
+  background: var(--soft-card);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(251, 114, 153, 0.1);
@@ -184,7 +232,7 @@
   animation: pulse-dot 2s ease-in-out infinite;
 }
 
-/* ===== ANT DESIGN OVERRIDES (dark theme) ===== */
+/* ===== ANT DESIGN OVERRIDES ===== */
 .ant-btn-primary:not(.ant-btn-background-ghost) {
   background: linear-gradient(135deg, #fb7299, #e85d8a) !important;
   border: none !important;
@@ -199,12 +247,12 @@
 .ant-input-affix-wrapper,
 .ant-select-selector,
 .ant-input-password {
-  background-color: #1a1a36 !important;
-  border-color: #1e1e3a !important;
-  color: #e4e4f0 !important;
+  background-color: var(--secondary) !important;
+  border-color: var(--border) !important;
+  color: var(--foreground) !important;
 }
 .ant-input::placeholder {
-  color: #6b6b8d !important;
+  color: var(--muted-foreground) !important;
 }
 .ant-input:focus,
 .ant-input-affix-wrapper:focus,
@@ -214,8 +262,8 @@
 }
 
 .ant-card {
-  background: rgba(18, 18, 42, 0.7) !important;
-  border-color: #1e1e3a !important;
+  background: var(--soft-card) !important;
+  border-color: var(--border) !important;
   backdrop-filter: blur(20px);
 }
 .ant-card:hover {
@@ -223,7 +271,7 @@
 }
 
 .ant-tabs-tab {
-  color: #6b6b8d !important;
+  color: var(--muted-foreground) !important;
 }
 .ant-tabs-tab-active .ant-tabs-tab-btn {
   color: #fb7299 !important;
@@ -237,7 +285,7 @@
 }
 
 .ant-divider {
-  border-color: #1e1e3a !important;
+  border-color: var(--border) !important;
 }
 
 .ant-spin .ant-spin-dot-item {
@@ -253,43 +301,43 @@
   border-color: #fb7299 !important;
 }
 
-/* ===== MODAL DARK MODE ===== */
+/* ===== MODAL THEME ===== */
 .ant-modal-content {
-  background: #1a1a36 !important;
-  color: #e4e4f0 !important;
+  background: var(--popover) !important;
+  color: var(--foreground) !important;
 }
 .ant-modal-header {
-  background: #1a1a36 !important;
-  color: #e4e4f0 !important;
-  border-bottom: 1px solid #1e1e3a !important;
+  background: var(--popover) !important;
+  color: var(--foreground) !important;
+  border-bottom: 1px solid var(--border) !important;
 }
 .ant-modal-title {
-  color: #e4e4f0 !important;
+  color: var(--foreground) !important;
 }
 .ant-modal-body {
-  color: #e4e4f0 !important;
+  color: var(--foreground) !important;
 }
 .ant-modal-footer {
-  border-top: 1px solid #1e1e3a !important;
+  border-top: 1px solid var(--border) !important;
 }
 .ant-modal-close {
-  color: #6b6b8d !important;
+  color: var(--muted-foreground) !important;
 }
 .ant-modal-close:hover {
-  color: #e4e4f0 !important;
+  color: var(--foreground) !important;
 }
 .ant-modal-mask {
-  background: rgba(0, 0, 0, 0.6) !important;
+  background: rgba(10, 10, 20, 0.48) !important;
   backdrop-filter: blur(4px) !important;
 }
 
-/* ===== MARKDOWN CONTENT IN DARK MODE ===== */
+/* ===== MARKDOWN CONTENT ===== */
 .markdown-content {
-  color: #c8c8e0;
+  color: var(--markdown-foreground);
   line-height: 1.8;
 }
 .markdown-content h1, .markdown-content h2, .markdown-content h3 {
-  color: #e4e4f0;
+  color: var(--foreground);
   margin-top: 1.5em;
   margin-bottom: 0.5em;
 }
@@ -303,14 +351,14 @@
 }
 .markdown-content li { margin-bottom: 0.3em; }
 .markdown-content code {
-  background: rgba(251, 114, 153, 0.1);
+  background: var(--code-bg);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 0.9em;
   color: #fb7299;
 }
 .markdown-content pre {
-  background: #0e0e22;
+  background: var(--pre-bg);
   padding: 16px;
   border-radius: 8px;
   overflow-x: auto;
@@ -318,13 +366,13 @@
 }
 .markdown-content pre code {
   background: transparent;
-  color: #c8c8e0;
+  color: var(--markdown-foreground);
 }
 .markdown-content blockquote {
   border-left: 3px solid #fb7299;
   padding-left: 16px;
   margin-left: 0;
-  color: #8b8bb0;
+  color: var(--markdown-muted);
 }
 .markdown-content a {
   color: #4cc9f0;
@@ -332,4 +380,122 @@
 }
 .markdown-content a:hover {
   text-decoration: underline;
+}
+
+.developer-wechat-float {
+  position: fixed;
+  right: 18px;
+  top: 48%;
+  transform: translateY(-50%);
+  z-index: 1100;
+}
+
+.developer-wechat-trigger {
+  width: 52px;
+  min-height: 58px;
+  border: 1px solid rgba(251, 114, 153, 0.28);
+  border-radius: 8px;
+  background: var(--popover);
+  color: var(--foreground);
+  box-shadow: 0 14px 34px rgba(15, 18, 35, 0.16);
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: default;
+  font-size: 12px;
+  line-height: 1.1;
+}
+
+.developer-wechat-trigger .anticon {
+  color: #22c55e;
+  font-size: 22px;
+}
+
+.developer-wechat-popover {
+  position: absolute;
+  right: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%) translateX(8px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+}
+
+.developer-wechat-float:hover .developer-wechat-popover,
+.developer-wechat-float:focus-within .developer-wechat-popover {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+
+.developer-wechat-card {
+  width: min(300px, calc(100vw - 96px));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgba(15, 18, 35, 0.22);
+  padding: 8px;
+}
+
+.developer-wechat-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.developer-wechat-fallback {
+  min-height: 220px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #202338;
+  text-align: center;
+  font-size: 13px;
+}
+
+.developer-wechat-fallback .anticon {
+  color: #22c55e;
+  font-size: 32px;
+}
+
+.dark .developer-wechat-trigger {
+  background: rgba(22, 22, 46, 0.94);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.36);
+}
+
+@media (max-width: 768px) {
+  .developer-wechat-float {
+    right: 12px;
+    top: auto;
+    bottom: 96px;
+    transform: none;
+  }
+
+  .developer-wechat-popover {
+    right: 0;
+    top: auto;
+    bottom: calc(100% + 10px);
+    transform: translateY(8px);
+  }
+
+  .developer-wechat-float:hover .developer-wechat-popover,
+  .developer-wechat-float:focus-within .developer-wechat-popover {
+    transform: translateY(0);
+  }
+}
+
+/* 白天版保持页面更轻，隐藏视频封面。 */
+.light .analyze-video-cover,
+.light .history-item-cover,
+.light .upowner-video-cover,
+.light .notebook-video-cover {
+  display: none !important;
 }

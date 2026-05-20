@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button, Space, message } from "antd";
+import { App, Button, Space } from "antd";
 import { CompressOutlined, CopyOutlined, ExpandOutlined } from "@ant-design/icons";
 
 interface MindMapViewProps {
@@ -46,7 +46,7 @@ function applyBrandMindMapColors(svg: SVGSVGElement) {
     path.style.strokeOpacity = "0.58";
     path.style.strokeLinecap = "round";
     path.style.strokeLinejoin = "round";
-    path.style.filter = `drop-shadow(0 0 5px ${color}55)`;
+    path.style.filter = "var(--mindmap-link-filter)";
   });
 
   svg.querySelectorAll<SVGGElement>("g.markmap-node").forEach((node) => {
@@ -57,8 +57,8 @@ function applyBrandMindMapColors(svg: SVGSVGElement) {
     const rect = node.querySelector<SVGRectElement>("rect.markmap-node-rect");
 
     if (text) {
-      text.style.fill = data?.depth === 0 ? "#ffffff" : "#f3f4ff";
-      text.style.stroke = "#0a0a1a";
+      text.style.fill = data?.depth === 0 ? "var(--mindmap-root-text)" : "var(--mindmap-node-text)";
+      text.style.stroke = "var(--mindmap-node-stroke)";
       text.style.strokeWidth = data?.depth === 0 ? "4px" : "3px";
       text.style.paintOrder = "stroke";
       text.style.fontWeight = data?.depth === 0 ? "700" : "500";
@@ -78,6 +78,7 @@ function applyBrandMindMapColors(svg: SVGSVGElement) {
 }
 
 export default function MindMapView({ markdown }: MindMapViewProps) {
+  const { message } = App.useApp();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const styleTagRef = useRef<HTMLStyleElement | null>(null);
@@ -88,14 +89,34 @@ export default function MindMapView({ markdown }: MindMapViewProps) {
     if (!styleTagRef.current) {
       const style = document.createElement("style");
       style.textContent = `
+        :root {
+          --mindmap-shell-bg: #ffffff;
+          --mindmap-canvas-bg: radial-gradient(circle at 12% 8%, rgba(251, 114, 153, 0.12), transparent 30%), radial-gradient(circle at 88% 82%, rgba(76, 201, 240, 0.14), transparent 34%), #ffffff;
+          --mindmap-helper-text: #6b7284;
+          --mindmap-node-text: #202338;
+          --mindmap-root-text: #ffffff;
+          --mindmap-node-stroke: rgba(255, 255, 255, 0.9);
+          --mindmap-link-filter: none;
+          --mindmap-border: rgba(251, 114, 153, 0.16);
+        }
+        .dark {
+          --mindmap-shell-bg: #0a0a1a;
+          --mindmap-canvas-bg: radial-gradient(circle at 12% 8%, rgba(251, 114, 153, 0.16), transparent 30%), radial-gradient(circle at 88% 82%, rgba(76, 201, 240, 0.12), transparent 34%), #0a0a1a;
+          --mindmap-helper-text: var(--muted-foreground);
+          --mindmap-node-text: #f3f4ff;
+          --mindmap-root-text: #ffffff;
+          --mindmap-node-stroke: #0a0a1a;
+          --mindmap-link-filter: drop-shadow(0 0 5px rgba(251, 114, 153, 0.28));
+          --mindmap-border: rgba(251, 114, 153, 0.12);
+        }
         .markmap { display: block !important; }
         .markmap text {
           font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-          fill: #f3f4ff;
+          fill: var(--mindmap-node-text);
         }
         .markmap-node-text {
           paint-order: stroke;
-          stroke: #0a0a1a;
+          stroke: var(--mindmap-node-stroke);
           stroke-width: 3px;
           stroke-linejoin: round;
         }
@@ -104,6 +125,12 @@ export default function MindMapView({ markdown }: MindMapViewProps) {
         }
         .markmap-link {
           fill: none;
+        }
+        .mindmap-view-shell:fullscreen {
+          background: var(--mindmap-shell-bg) !important;
+        }
+        .mindmap-view-shell:fullscreen .mindmap-view-canvas {
+          background: var(--mindmap-canvas-bg) !important;
         }
       `;
       document.head.appendChild(style);
@@ -172,7 +199,7 @@ export default function MindMapView({ markdown }: MindMapViewProps) {
       svg.removeEventListener("click", colorizeAfterClick);
       container.innerHTML = "";
     };
-  }, [markdown]);
+  }, [markdown, message]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -205,11 +232,12 @@ export default function MindMapView({ markdown }: MindMapViewProps) {
   return (
     <div
       ref={wrapperRef}
+      className="mindmap-view-shell"
       style={{
         display: "flex",
         flexDirection: "column",
         height: isFullscreen ? "100vh" : "100%",
-        background: "#0a0a1a",
+        background: "var(--mindmap-shell-bg)",
         padding: isFullscreen ? 16 : 0,
       }}
     >
@@ -221,7 +249,7 @@ export default function MindMapView({ markdown }: MindMapViewProps) {
         borderBottom: "1px solid var(--border)",
         flexShrink: 0,
       }}>
-        <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+        <span style={{ fontSize: 12, color: "var(--mindmap-helper-text)" }}>
           点击节点可展开/折叠 | 滚轮缩放 | 拖拽平移
         </span>
         <Space>
@@ -239,13 +267,13 @@ export default function MindMapView({ markdown }: MindMapViewProps) {
       </div>
       <div
         ref={containerRef}
+        className="mindmap-view-canvas"
         style={{
           flex: 1,
           overflow: "auto",
-          background:
-            "radial-gradient(circle at 12% 8%, rgba(251, 114, 153, 0.16), transparent 30%), radial-gradient(circle at 88% 82%, rgba(76, 201, 240, 0.12), transparent 34%), #0a0a1a",
+          background: "var(--mindmap-canvas-bg)",
           borderRadius: "0 0 12px 12px",
-          border: "1px solid rgba(251, 114, 153, 0.12)",
+          border: "1px solid var(--mindmap-border)",
           padding: 16,
           minHeight: 0,
         }}

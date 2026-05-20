@@ -274,7 +274,7 @@ export default function NotebookDetailPage() {
                   hoverable
                   style={{ borderRadius: 10 }}
                   cover={
-                    <div style={{ width: "100%", aspectRatio: "16/9", background: "var(--card)", overflow: "hidden" }}>
+                    <div className="notebook-video-cover" style={{ width: "100%", aspectRatio: "16/9", background: "var(--card)", overflow: "hidden" }}>
                       {nv.video.pic ? (
                         <img
                           src={nv.video.pic}

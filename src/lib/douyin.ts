@@ -39,6 +39,23 @@ export function extractDouyinId(rawUrl: string): string | null {
   return null;
 }
 
+function extractDouyinIdFromText(text: string): string | null {
+  const patterns = [
+    /douyin\.com\/video\/(\d{15,20})/i,
+    /iesdouyin\.com\/share\/video\/(\d{15,20})/i,
+    /modal_id=(\d{15,20})/i,
+    /aweme_id=(\d{15,20})/i,
+    /["']aweme_id["']\s*:\s*["']?(\d{15,20})["']?/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
+
 // ─── Short URL Resolution ─────────────────────────────────────────────────────
 
 export async function resolveDouyinShortUrl(shortUrl: string): Promise<string | null> {
@@ -55,24 +72,13 @@ export async function resolveDouyinShortUrl(shortUrl: string): Promise<string | 
     return httpId;
   }
 
-  const { chromium } = await import("playwright");
-  let browser: Browser | null = null;
-
-  try {
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({
-      userAgent: PC_UA,
-    });
-    await page.goto(normalizedShortUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
-    const id = extractDouyinId(page.url());
-    if (id) setCachedShortUrlId(normalizedShortUrl, id);
-    return id;
-  } catch (err) {
-    console.warn("[douyin] 短链接解析失败:", err instanceof Error ? err.message : err);
-    return null;
-  } finally {
-    await browser?.close();
+  const playwrightId = await resolveDouyinShortUrlViaPlaywright(normalizedShortUrl);
+  if (playwrightId) {
+    setCachedShortUrlId(normalizedShortUrl, playwrightId);
+    return playwrightId;
   }
+
+  return null;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -231,23 +237,210 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
+function remainingTimeout(deadline: number, capMs: number): number {
+  return Math.max(1, Math.min(capMs, deadline - Date.now()));
+}
+
 async function resolveDouyinShortUrlViaHttp(shortUrl: string): Promise<string | null> {
+  const deadline = Date.now() + 12_000;
+  const headerVariants: HeadersInit[] = [
+    {
+      "User-Agent": PC_UA,
+      "Accept-Language": "zh-CN,zh;q=0.9",
+      "Referer": "https://www.douyin.com/",
+    },
+    {
+      "User-Agent": MOBILE_UA,
+      "Accept-Language": "zh-CN,zh;q=0.9",
+      "Referer": "https://www.douyin.com/",
+    },
+  ];
+
+  for (const headers of headerVariants) {
+    if (Date.now() >= deadline) return null;
+    try {
+      let nextUrl = shortUrl;
+      for (let redirectCount = 0; redirectCount < 3 && Date.now() < deadline; redirectCount++) {
+        const resp = await fetchWithTimeout(
+          nextUrl,
+          { headers, redirect: "manual" },
+          remainingTimeout(deadline, 3_500)
+        );
+
+        const idFromRespUrl = extractDouyinIdFromText(resp.url);
+        if (idFromRespUrl) return idFromRespUrl;
+
+        const location = resp.headers.get("location");
+        if (!location) {
+          const text = await resp.text().catch(() => "");
+          return extractDouyinIdFromText(text);
+        }
+
+        nextUrl = new URL(location, nextUrl).toString();
+        const idFromLocation = extractDouyinIdFromText(nextUrl);
+        if (idFromLocation) return idFromLocation;
+      }
+    } catch (err) {
+      console.warn("[douyin] HTTP 手动跳转解析失败:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  for (const headers of headerVariants) {
+    if (Date.now() >= deadline) return null;
+    try {
+      const resp = await fetchWithTimeout(
+        shortUrl,
+        { headers, redirect: "follow" },
+        remainingTimeout(deadline, 4_000)
+      );
+      const id = extractDouyinIdFromText(resp.url);
+      if (id) return id;
+    } catch (err) {
+      console.warn("[douyin] HTTP 短链接解析失败:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  return null;
+}
+
+async function resolveDouyinShortUrlViaPlaywright(shortUrl: string): Promise<string | null> {
+  const { chromium } = await import("playwright");
+  let browser: Browser | null = null;
+  const deadline = Date.now() + 18_000;
+
   try {
-    const resp = await fetchWithTimeout(
-      shortUrl,
+    browser = await chromium.launch({
+      headless: true,
+      args: [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-quic",
+      ],
+    });
+
+    const variants = [
       {
-        headers: {
-          "User-Agent": MOBILE_UA,
-          "Accept-Language": "zh-CN,zh;q=0.9",
-        },
-        redirect: "follow",
+        name: "desktop",
+        userAgent: PC_UA,
+        viewport: { width: 1280, height: 800 },
+        isMobile: false,
+        hasTouch: false,
+        bootstrapHome: true,
       },
-      5_000
-    );
-    return extractDouyinId(resp.url);
-  } catch (err) {
-    console.warn("[douyin] HTTP 短链接解析失败:", err instanceof Error ? err.message : err);
+      {
+        name: "mobile",
+        userAgent: MOBILE_UA,
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
+        hasTouch: true,
+        bootstrapHome: false,
+      },
+    ];
+
+    for (const variant of variants) {
+      if (Date.now() >= deadline) return null;
+      let context: BrowserContext | null = null;
+      let capturedId: string | null = null;
+
+      try {
+        context = await browser.newContext({
+          userAgent: variant.userAgent,
+          viewport: variant.viewport,
+          isMobile: variant.isMobile,
+          hasTouch: variant.hasTouch,
+          locale: "zh-CN",
+          timezoneId: "Asia/Shanghai",
+        });
+
+        await context.addInitScript(() => {
+          Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+          // @ts-expect-error chrome 字段
+          window.chrome = window.chrome || { runtime: {} };
+        });
+
+        const page = await context.newPage();
+
+        page.on("response", (resp) => {
+          if (capturedId) return;
+          const id = extractDouyinIdFromText(resp.url());
+          if (id) capturedId = id;
+        });
+
+        if (variant.bootstrapHome) {
+          await page.goto("https://www.douyin.com/", { waitUntil: "domcontentloaded", timeout: remainingTimeout(deadline, 5_000) }).catch(() => {});
+          await page.waitForTimeout(800).catch(() => {});
+        }
+
+        if (Date.now() >= deadline) return null;
+
+        let gotoFailed = false;
+        await page.goto(shortUrl, { waitUntil: "commit", timeout: remainingTimeout(deadline, 6_000) }).catch((err) => {
+          gotoFailed = true;
+          console.warn(`[douyin] Playwright ${variant.name} 短链 goto 失败:`, err instanceof Error ? err.message : err);
+        });
+
+        const immediateId = extractDouyinIdFromText(page.url()) || capturedId;
+        if (immediateId) return immediateId;
+
+        if (gotoFailed) continue;
+
+        await page
+          .waitForURL((url) => Boolean(extractDouyinIdFromText(url.href)), {
+            timeout: remainingTimeout(deadline, 4_000),
+            waitUntil: "commit",
+          })
+          .catch(() => {});
+
+        const urlId = extractDouyinIdFromText(page.url()) || capturedId;
+        if (urlId) return urlId;
+
+        await page.waitForTimeout(1_500);
+
+        const candidates = await page
+          .evaluate(() => {
+            const values: string[] = [location.href];
+            const selectors = [
+              'link[rel="canonical"]',
+              'meta[property="og:url"]',
+              'meta[name="twitter:url"]',
+              'meta[property="al:ios:url"]',
+              'meta[property="al:android:url"]',
+            ];
+            for (const selector of selectors) {
+              const element = document.querySelector(selector);
+              const value = element?.getAttribute("href") || element?.getAttribute("content");
+              if (value) values.push(value);
+            }
+            for (const anchor of Array.from(document.querySelectorAll("a[href]")).slice(0, 80)) {
+              const href = anchor.getAttribute("href");
+              if (href) values.push(href);
+            }
+            return values;
+          })
+          .catch(() => []);
+
+        for (const candidate of candidates) {
+          const id = extractDouyinIdFromText(candidate);
+          if (id) return id;
+        }
+
+        const html = await page.content().catch(() => "");
+        const htmlId = html ? extractDouyinIdFromText(html) : null;
+        if (htmlId) return htmlId;
+      } catch (err) {
+        console.warn(`[douyin] Playwright ${variant.name} 短链接解析失败:`, err instanceof Error ? err.message : err);
+      } finally {
+        await context?.close().catch(() => {});
+      }
+    }
+
     return null;
+  } catch (err) {
+    console.warn("[douyin] Playwright 短链接解析失败:", err instanceof Error ? err.message : err);
+    return null;
+  } finally {
+    await browser?.close().catch(() => {});
   }
 }
 

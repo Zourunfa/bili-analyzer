@@ -1,0 +1,16 @@
+erDiagram
+  users ||--o{ user_videos : owns
+  users ||--o{ notebooks : owns
+  users ||--o{ video_timestamp_notes : writes
+  users ||--o{ video_tags : creates
+  users ||--o{ video_tag_relations : applies
+  users ||--o{ chat_messages : sends
+  videos ||--o{ user_videos : appears_in
+  videos ||--o{ notebook_videos : collected_by
+  videos ||--o{ knowledge_points : yields
+  videos ||--o{ video_timestamp_notes : annotated_by
+  videos ||--o{ video_tag_relations : tagged_by
+  videos ||--o{ chat_messages : discussed_in
+  notebooks ||--o{ notebook_videos : contains
+  knowledge_points ||--|| embeddings : embeds
+  video_tags ||--o{ video_tag_relations : groups

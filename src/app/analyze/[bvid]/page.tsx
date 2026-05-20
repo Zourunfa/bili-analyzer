@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Layout, Card, Tabs, Input, Button, Spin, Empty, Typography, Space, Tag, Divider, Progress, Modal, Select, Form, message } from "antd";
+import { Layout, Card, Tabs, Input, Button, Spin, Empty, Typography, Space, Tag, Divider, Progress, Modal, Select, Form, App } from "antd";
 import {
   SendOutlined,
   RobotOutlined,
@@ -52,6 +52,19 @@ function getDisplayImageUrl(url?: string | null): string {
     return normalized;
   }
   return normalized;
+}
+
+function getBilibiliVideoUrl(rawBvid: string, page?: number): string {
+  const matchedBvid = rawBvid.match(/^(BV[0-9A-Za-z]+)/)?.[1];
+  if (!matchedBvid) return "";
+  const pageSuffix = page && page > 1 ? `?p=${page}` : "";
+  return `https://www.bilibili.com/video/${matchedBvid}${pageSuffix}`;
+}
+
+type BilibiliChapterPage = NonNullable<VideoInfoResponse["pages"]>[number];
+
+function getChapterStorageBvid(page: BilibiliChapterPage, fallbackBvid: string): string {
+  return `${page.bvid || fallbackBvid}_p${page.page}`;
 }
 
 interface VideoInfo {
@@ -395,6 +408,7 @@ export default function AnalyzePage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { message } = App.useApp();
   const { data: session, status: authStatus } = useSession();
   const [modelConfigForm] = Form.useForm();
   const bvid = params.bvid as string;
@@ -470,6 +484,38 @@ export default function AnalyzePage() {
   const [headerUrl, setHeaderUrl] = useState("");
   const [headerLoading, setHeaderLoading] = useState(false);
 
+  const addVideoToNotebook = async (notebookId: string, videoId: string) => {
+    await fetch(`/api/notebooks/${notebookId}/videos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ videoId }),
+    });
+  };
+
+  const getChapterParseStates = async (pages: BilibiliChapterPage[], fallbackBvid: string) => {
+    const states: Array<{
+      page: BilibiliChapterPage;
+      storageBvid: string;
+      parsed: boolean;
+      videoId?: string;
+    }> = [];
+
+    for (const page of pages) {
+      const storageBvid = getChapterStorageBvid(page, fallbackBvid);
+      const res = await fetch(`/api/videos?bvid=${encodeURIComponent(storageBvid)}`);
+      const data = res.ok ? await res.json() : {};
+      const video = data.video as HistoryVideo | undefined;
+      states.push({
+        page,
+        storageBvid,
+        parsed: !!video?.subtitleText,
+        videoId: video?.id,
+      });
+    }
+
+    return states;
+  };
+
   const buildAnalyzeUrl = (data: VideoInfoResponse) => {
     const params = new URLSearchParams();
     params.set("platform", data.platform);
@@ -482,14 +528,21 @@ export default function AnalyzePage() {
 
   const analyzeAllChapters = async (data: VideoInfoResponse) => {
     const pages = data.pages || [];
-    const firstPage = pages[0];
-    if (!firstPage) {
+    if (!pages[0]) {
       router.push(buildAnalyzeUrl(data));
       return;
     }
 
-    const hide = message.loading("正在创建章节笔记本...", 0);
+    const hide = message.loading("正在检查已解析章节...", 0);
     try {
+      const chapterStates = await getChapterParseStates(pages, data.id);
+      const firstMissing = chapterStates.find((state) => !state.parsed);
+      if (!firstMissing) {
+        hide();
+        message.success("所有章节都已经解析过，无需重复解析");
+        return;
+      }
+
       const notebookRes = await fetch("/api/notebooks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -505,16 +558,25 @@ export default function AnalyzePage() {
         throw new Error(notebookData.error || "章节笔记本创建失败");
       }
 
+      const skippedParsedVideos = chapterStates.filter((state) => state.parsed && state.videoId);
+      await Promise.all(
+        skippedParsedVideos.map((state) => addVideoToNotebook(notebookData.notebook.id, state.videoId!))
+      );
+
       hide();
-      message.success("章节合集笔记本已创建，开始按顺序解析");
+      message.success(
+        skippedParsedVideos.length > 0
+          ? `章节合集笔记本已创建，已跳过 ${skippedParsedVideos.length} 个已解析章节，从 P${firstMissing.page.page} 开始解析`
+          : "章节合集笔记本已创建，开始按顺序解析"
+      );
       writeChapterQueueControl(notebookData.notebook.id, "running");
       const params = new URLSearchParams();
       params.set("platform", "bilibili");
-      params.set("cid", String(firstPage.cid));
+      params.set("cid", String(firstMissing.page.cid));
       params.set("chapterQueue", "all");
-      params.set("chapterPage", String(firstPage.page));
+      params.set("chapterPage", String(firstMissing.page.page));
       params.set("notebookId", notebookData.notebook.id);
-      router.push(`/analyze/${firstPage.bvid || data.id}?${params.toString()}`);
+      router.push(`/analyze/${firstMissing.page.bvid || data.id}?${params.toString()}`);
     } catch (err) {
       hide();
       message.error(err instanceof Error ? err.message : "章节队列启动失败");
@@ -1046,13 +1108,34 @@ export default function AnalyzePage() {
     return page.part ? `${info.title} - P${page.page} ${page.part}` : `${info.title} - P${page.page}`;
   };
 
+  const enrichChapterQueueInfo = async (info: VideoInfo, signal?: AbortSignal): Promise<VideoInfo> => {
+    if (!isChapterQueue) return info;
+
+    try {
+      const infoRes = await fetch("/api/video-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: bvid }),
+        signal,
+      });
+      if (!infoRes.ok) return info;
+      const data = await infoRes.json() as VideoInfoResponse;
+      if (data.platform !== "bilibili" || !data.pages?.length) return info;
+      return {
+        ...info,
+        title: info.title || data.title || bvid,
+        cid: data.cid || info.cid,
+        page: data.page || chapterPage,
+        pages: data.pages,
+      };
+    } catch {
+      return info;
+    }
+  };
+
   const addVideoToQueueNotebook = async (videoId: string) => {
     if (!isChapterQueue || !notebookIdFromQueue) return;
-    await fetch(`/api/notebooks/${notebookIdFromQueue}/videos`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoId }),
-    });
+    await addVideoToNotebook(notebookIdFromQueue, videoId);
   };
 
   const getNextChapterPage = (info: VideoInfo) => {
@@ -1301,21 +1384,17 @@ export default function AnalyzePage() {
           if (dbData.video && dbData.video.subtitleText) {
             // 数据库有完整数据，直接使用
             const v = dbData.video;
-            setCurrentVideoId(v.id);
-            setVideoInfo({
-              title: v.title,
-              pic: v.pic || "",
-              owner: { name: v.ownerName },
-              duration: v.duration,
-              desc: v.desc || "",
-            });
-            videoInfoRef.current = {
+            const baseInfo: VideoInfo = {
               title: v.title,
               pic: v.pic || "",
               owner: { name: v.ownerName },
               duration: v.duration,
               desc: v.desc || "",
             };
+            const loadedInfo = await enrichChapterQueueInfo(baseInfo, signal);
+            setCurrentVideoId(v.id);
+            setVideoInfo(loadedInfo);
+            videoInfoRef.current = loadedInfo;
             setSubtitleText(v.subtitleText);
             if (v.summary) {
               setSummary(v.summary);
@@ -1325,7 +1404,10 @@ export default function AnalyzePage() {
             if (!v.summary && v.subtitleText) {
               const summaryText = await generateSummary(v.subtitleText, signal);
               if (cancelled || signal.aborted) return;
-              autoSaveVideo(videoInfoRef.current!, v.subtitleText, v.subtitleSource || "cc", summaryText);
+              autoSaveVideo(loadedInfo, v.subtitleText, v.subtitleSource || "cc", summaryText);
+            } else if (isChapterQueue) {
+              message.info(`P${chapterPage} 已解析过，自动跳到下一个未完成章节`);
+              void advanceChapterQueue(loadedInfo, v.id);
             }
             return; // 数据库数据加载完毕，无需再走在线流程
           }
@@ -1483,7 +1565,7 @@ export default function AnalyzePage() {
           setSummaryLoading(false);
           setTranscribing(false);
         }
-      } else if (videoUrl) {
+      } else if (videoUrl && Number(infoData.duration || 0) > 0) {
         // 抖音/小红书：使用 videoUrl 转写音频
         setTranscribing(true);
         setTranscribeStep("正在从视频下载音频...");
@@ -2004,9 +2086,7 @@ export default function AnalyzePage() {
 
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
-        message.error(data.error || "模板生成失败");
-        setTemplateLoading(false);
-        return;
+        throw new Error(data.error || "模板生成失败");
       }
 
       const reader = res.body.getReader();
@@ -2028,12 +2108,16 @@ export default function AnalyzePage() {
             setTemplateOutput(output);
           }
           if (payload.type === "error") {
-            message.error(payload.message || "模板生成失败");
+            setTemplateOutput("");
+            throw new Error(typeof payload.message === "string" ? payload.message : "模板生成失败");
           }
         }
       }
-    } catch {
-      message.error("模板生成失败");
+      if (!output.trim()) {
+        message.warning("模型没有返回可用内容，请切换模型或稍后重试");
+      }
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "模板生成失败");
     } finally {
       setTemplateLoading(false);
     }
@@ -2152,25 +2236,46 @@ export default function AnalyzePage() {
     window.setTimeout(() => setSubtitleCopied(false), 2000);
   };
 
+  const currentBilibiliPage = isChapterQueue
+    ? chapterPage
+    : videoInfo?.page || videoInfo?.pages?.find((page) => page.cid === Number(cid))?.page;
+  const bilibiliVideoUrl = platform === "bilibili" ? getBilibiliVideoUrl(bvid, currentBilibiliPage) : "";
+  const videoCoverSrc = videoInfo?.pic || videoInfo?.coverUrl;
+  const videoCoverAlt = videoInfo?.title || "视频封面";
+  const videoCoverContent = (
+    <div className="analyze-video-cover" style={{ width: "100%", aspectRatio: "16/9", background: "var(--card)", borderRadius: 8, overflow: "hidden" }}>
+      {videoCoverSrc ? (
+        <img
+          src={getDisplayImageUrl(videoCoverSrc)}
+          alt={videoCoverAlt}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        <div className="video-cover-placeholder">
+          <PlayCircleOutlined />
+        </div>
+      )}
+    </div>
+  );
+
   const videoCardNode = videoInfo ? (
     <Card
       className="analyze-video-card"
       size="small"
       cover={
-        <div className="analyze-video-cover" style={{ width: "100%", aspectRatio: "16/9", background: "var(--card)", borderRadius: 8, overflow: "hidden" }}>
-          {videoInfo.pic || videoInfo.coverUrl ? (
-            <img
-              src={getDisplayImageUrl(videoInfo.pic || videoInfo.coverUrl)}
-              alt={videoInfo.title}
-              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-              referrerPolicy="no-referrer"
-            />
-          ) : (
-            <div className="video-cover-placeholder">
-              <PlayCircleOutlined />
-            </div>
-          )}
-        </div>
+        bilibiliVideoUrl ? (
+          <a
+            className="analyze-video-cover-link"
+            href={bilibiliVideoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="在 B 站打开视频"
+            aria-label="在 B 站打开视频"
+          >
+            {videoCoverContent}
+          </a>
+        ) : videoCoverContent
       }
       styles={{ body: { padding: "12px 0 0" } }}
     >
@@ -2447,49 +2552,55 @@ export default function AnalyzePage() {
           disabled={modelSelectOptions.length === 0}
         />
         <Button
+          className="header-action-btn"
           icon={<SettingOutlined />}
           onClick={openModelConfigModal}
-          style={{ borderColor: "var(--border)", color: "azure" }}
+          style={{ borderColor: "var(--border)" }}
         >
           配置模型
         </Button>
         <Button
+          className="header-action-btn"
           icon={<TagsOutlined />}
           onClick={handleOpenTagModal}
           disabled={!bvid || isHistoryMode || !currentVideoId}
-          style={{ borderColor: "var(--border)", color: "azure" }}
+          style={{ borderColor: "var(--border)" }}
         >
           标签
         </Button>
         <Button
+          className="header-action-btn"
           icon={<FileMarkdownOutlined />}
           onClick={handleOpenTemplateModal}
           disabled={!subtitleText || !summary}
-          style={{ borderColor: "#8b5cf6", color: "azure" }}
+          style={{ borderColor: "#8b5cf6" }}
         >
           模板输出
         </Button>
         <Button
+          className="header-action-btn"
           icon={<BookOutlined />}
           onClick={() => router.push("/notebooks")}
-          style={{ borderColor: "var(--border)", color: "azure" }}
+          style={{ borderColor: "var(--border)" }}
         >
           智能合集
         </Button>
         <Button
+          className="header-action-btn"
           icon={<SaveOutlined style={{ color: "bisque" }}/>}
           onClick={handleOpenSaveModal}
           disabled={!subtitleText || !summary}
-          style={{ borderColor: "#fb7299",   color: "azure" }}
+          style={{ borderColor: "#fb7299" }}
         >
           保存到笔记本
         </Button>
         <Button
+          className="header-action-btn"
           icon={<ExportOutlined style={{ color: "#fbbf24" }}/>}
           onClick={handleExportSkill}
           loading={exportLoading}
           disabled={!subtitleText}
-          style={{ borderColor: "#fbbf24", color: "azure" }}
+          style={{ borderColor: "#fbbf24" }}
         >
           导出 Skill
         </Button>
@@ -2575,7 +2686,7 @@ export default function AnalyzePage() {
                   </span>
                 ),
                 children: (
-                  <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
+                  <div className="summary-scroll-pane" style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
                     {isHistoryMode && !videoInfo ? (
                       <Empty
                         image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -2604,7 +2715,7 @@ export default function AnalyzePage() {
                             <Progress
                               percent={Math.max(4, transcribeVisualProgress)}
                               strokeColor={{ "0%": "#fb7299", "55%": "#8b5cf6", "100%": "#22d3ee" }}
-                              trailColor="rgba(148, 163, 184, 0.18)"
+                              railColor="rgba(148, 163, 184, 0.18)"
                               size="small"
                               status="active"
                             />
@@ -2701,7 +2812,7 @@ export default function AnalyzePage() {
                         <Empty
                           image={Empty.PRESENTED_IMAGE_SIMPLE}
                           description={
-                            <Space direction="vertical" size={8}>
+                            <Space orientation="vertical" size={8}>
                               <Text type="secondary">基于字幕内容对话</Text>
                               <Space wrap>
                                 {quickQuestions.map((q) => (
@@ -3001,7 +3112,7 @@ export default function AnalyzePage() {
         cancelText="取消"
         confirmLoading={tagSubmitting}
       >
-        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+        <Space orientation="vertical" style={{ width: "100%" }} size={12}>
           <Text type="secondary">选择当前视频标签：</Text>
           <Select
             mode="multiple"
@@ -3035,7 +3146,7 @@ export default function AnalyzePage() {
         footer={null}
         width={760}
       >
-        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+        <Space orientation="vertical" style={{ width: "100%" }} size={12}>
           <Select
             style={{ width: "100%" }}
             value={templateId || undefined}
@@ -3458,6 +3569,96 @@ export default function AnalyzePage() {
           background: rgba(251, 114, 153, 0.14);
           box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.08);
         }
+        .light .transcribe-progress-wrap {
+          background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(247, 248, 251, 0.72));
+        }
+        .light .transcribe-progress-card {
+          border-color: rgba(251, 114, 153, 0.22);
+          background:
+            radial-gradient(circle at 50% 0%, rgba(76, 201, 240, 0.16), transparent 42%),
+            linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 255, 0.96));
+          box-shadow: 0 18px 50px rgba(32, 35, 56, 0.12);
+        }
+        .light .transcribe-progress-card::before {
+          background: linear-gradient(90deg, transparent, rgba(251, 114, 153, 0.08), transparent);
+        }
+        .light .transcribe-orbit-core {
+          background: #ffffff;
+          color: #fb7299;
+          box-shadow: inset 0 0 0 1px rgba(230, 232, 240, 0.96);
+        }
+        .light .transcribe-progress-title {
+          color: #202338;
+        }
+        .light .transcribe-progress-subtitle,
+        .light .transcribe-download-size,
+        .light .chapter-queue-controls .ant-typography {
+          color: #6b7284 !important;
+        }
+        .light .transcribe-wave span {
+          opacity: 0.9;
+          background: linear-gradient(180deg, #0ea5e9, #8b5cf6 50%, #fb7299);
+        }
+        .light .transcribe-progress-card .ant-progress-outer {
+          filter: drop-shadow(0 4px 10px rgba(76, 201, 240, 0.12));
+        }
+        .light .transcribe-progress-card .ant-progress-text {
+          color: #6b7284 !important;
+        }
+        .light .chapter-queue-controls .ant-btn {
+          background: #ffffff;
+          border-color: #d9deea;
+          color: #202338;
+          box-shadow: 0 4px 12px rgba(32, 35, 56, 0.08);
+        }
+        .light .chapter-queue-controls .ant-btn:not(:disabled):hover {
+          border-color: #8b5cf6;
+          color: #7c3aed;
+          background: #ffffff;
+        }
+        .light .chapter-queue-controls .ant-btn-dangerous {
+          color: #dc2626;
+          border-color: rgba(220, 38, 38, 0.42);
+        }
+        .light .chapter-queue-controls .ant-btn-dangerous:not(:disabled):hover {
+          color: #b91c1c;
+          border-color: #dc2626;
+          background: rgba(254, 242, 242, 0.95);
+        }
+        .light .chapter-queue-controls .ant-btn-primary {
+          color: #ffffff;
+          background: linear-gradient(90deg, #fb7299, #8b5cf6);
+          border-color: transparent;
+        }
+        .light .transcribe-step {
+          border-color: #dfe4ef;
+          background: rgba(255, 255, 255, 0.84);
+          color: #6b7284;
+        }
+        .light .transcribe-step span {
+          background: #eef2f8;
+          color: #6b7284;
+        }
+        .light .transcribe-step.done {
+          color: #047857;
+          border-color: rgba(16, 185, 129, 0.34);
+          background: rgba(236, 253, 245, 0.86);
+        }
+        .light .transcribe-step.done span {
+          color: #047857;
+          background: rgba(16, 185, 129, 0.12);
+        }
+        .light .transcribe-step.active {
+          color: #be185d;
+          border-color: rgba(251, 114, 153, 0.5);
+          background: rgba(253, 242, 248, 0.94);
+          box-shadow: 0 0 0 3px rgba(251, 114, 153, 0.1);
+        }
+        .light .transcribe-step.active span {
+          color: #be185d;
+          background: rgba(251, 114, 153, 0.14);
+        }
         @keyframes transcribeRotate {
           to { transform: rotate(360deg); }
         }
@@ -3483,6 +3684,25 @@ export default function AnalyzePage() {
           display: flex;
           align-items: center;
           gap: 10px;
+          min-width: 0;
+        }
+        .analyze-header .header-action-btn {
+          color: var(--foreground);
+          background: var(--card);
+        }
+        .analyze-header .header-action-btn:not(:disabled):hover {
+          color: #fb7299;
+          border-color: #fb7299 !important;
+          background: var(--hover-bg);
+        }
+        .dark .analyze-header .header-action-btn {
+          color: #e4e4f0;
+          background: rgba(18, 18, 42, 0.72);
+        }
+        .analyze-header .header-action-btn:disabled {
+          color: var(--muted-foreground);
+          background: var(--muted);
+          opacity: 0.58;
         }
         .mobile-side-panel-wrap {
           padding: 12px 12px 0;
@@ -3768,18 +3988,23 @@ export default function AnalyzePage() {
           .analyze-header {
             height: auto !important;
             line-height: normal !important;
-            padding: 10px 12px !important;
+            padding: 10px 12px 12px !important;
             display: grid !important;
-            grid-template-columns: 1fr auto;
+            grid-template-columns: auto minmax(0, 1fr);
             grid-template-areas:
               "back actions"
               "search search";
             gap: 10px;
+            width: 100%;
+            max-width: 100vw;
+            overflow: hidden;
           }
           .analyze-header .header-back-link {
             grid-area: back;
             font-size: 14px !important;
             line-height: 1.2;
+            white-space: nowrap;
+            min-width: max-content;
           }
           .analyze-header .header-video-title {
             display: none;
@@ -3788,25 +4013,85 @@ export default function AnalyzePage() {
             grid-area: search;
             width: 100%;
             max-width: none !important;
+            min-width: 0;
           }
           .analyze-header .header-actions {
             grid-area: actions;
-            justify-content: flex-end;
+            justify-content: flex-start;
             gap: 6px;
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 0 2px 6px;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-inline: contain;
+          }
+          .analyze-header .header-actions::-webkit-scrollbar {
+            display: none;
+          }
+          .analyze-header .header-actions .ant-select {
+            flex: 0 0 148px;
+            width: 148px !important;
           }
           .analyze-header .header-actions .ant-btn {
+            flex: 0 0 auto;
             padding: 0 10px;
             font-size: 12px;
+            white-space: nowrap;
+          }
+          .analyze-header .header-search .ant-input-affix-wrapper {
+            min-width: 0;
+          }
+          .ant-layout-content {
+            min-width: 0;
+            width: 100%;
+            max-width: 100vw;
+          }
+          .mobile-side-panel-wrap {
+            min-width: 0;
+            overflow: hidden;
+          }
+          .mobile-panel-toggle-row {
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch;
+          }
+          .mobile-panel-toggle-row::-webkit-scrollbar {
+            display: none;
+          }
+          .mobile-panel-toggle-row .ant-btn {
+            flex: 0 0 auto;
+            white-space: nowrap;
           }
           .main-tabs-mobile > .ant-tabs-nav {
             padding: 0 10px;
+            flex-shrink: 0;
+            overflow: hidden;
           }
           .main-tabs-mobile .ant-tabs-tab {
             padding: 10px 12px;
             font-size: 13px;
           }
+          .main-tabs-mobile .ant-tabs-content-holder,
+          .main-tabs-mobile .ant-tabs-content,
+          .main-tabs-mobile .ant-tabs-tabpane {
+            min-width: 0;
+            min-height: 0;
+          }
           .main-tabs-mobile .ant-tabs-tabpane > div {
             padding: 14px !important;
+          }
+          .main-tabs-mobile .summary-scroll-pane {
+            min-width: 0;
+            overflow-x: hidden !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-y: contain;
+            touch-action: pan-y;
           }
           .main-tabs-mobile .mindmap-pane {
             padding: 12px !important;
@@ -3814,6 +4099,9 @@ export default function AnalyzePage() {
           .main-tabs-mobile .markdown-body {
             font-size: 13px;
             line-height: 1.75;
+            max-width: 100%;
+            overflow-wrap: anywhere;
+            word-break: break-word;
           }
           .main-tabs-mobile .markdown-body h1 {
             font-size: 18px;

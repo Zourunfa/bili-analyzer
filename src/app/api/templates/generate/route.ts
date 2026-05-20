@@ -1,9 +1,38 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
-import { streamText } from "ai";
+import { APICallError, streamText } from "ai";
 import { authOptions } from "@/lib/auth";
 import { type ClientModelConfig, getLanguageModel } from "@/lib/llm";
 import { getTemplatePresetById } from "@/lib/template-presets";
+
+function getGenerationError(error: unknown): { message: string; status: number } {
+  if (APICallError.isInstance(error)) {
+    const providerError =
+      typeof error.data === "object" && error.data && "error" in error.data
+        ? (error.data.error as { code?: unknown; message?: unknown; type?: unknown })
+        : null;
+    const code = typeof providerError?.code === "string" ? providerError.code : String(error.statusCode || "");
+    const type = typeof providerError?.type === "string" ? providerError.type : "";
+    const message = typeof providerError?.message === "string" ? providerError.message : error.message;
+
+    if (error.statusCode === 402 || code === "402" || type === "insufficient_balance") {
+      return {
+        message: "当前模型服务账号余额不足，无法生成模板。请充值该模型账号，或切换到其他可用模型后重试。",
+        status: 402,
+      };
+    }
+
+    return {
+      message: `模型服务调用失败：${message || "请稍后重试或切换模型"}`,
+      status: error.statusCode && error.statusCode >= 400 && error.statusCode < 600 ? error.statusCode : 502,
+    };
+  }
+
+  return {
+    message: error instanceof Error ? error.message : "模板生成失败",
+    status: 500,
+  };
+}
 
 export async function POST(req: Request) {
   try {
@@ -57,7 +86,21 @@ export async function POST(req: Request) {
           ].join("\n"),
         },
       ],
+      onError({ error }) {
+        const { message } = getGenerationError(error);
+        console.error("模板生成上游错误:", message);
+      },
     });
+
+    const textIterator = result.textStream[Symbol.asyncIterator]();
+    const firstChunk = await textIterator.next().catch((error) => {
+      const generationError = getGenerationError(error);
+      return { error: generationError };
+    });
+
+    if ("error" in firstChunk) {
+      return NextResponse.json({ error: firstChunk.error.message }, { status: firstChunk.error.status });
+    }
 
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
@@ -66,15 +109,21 @@ export async function POST(req: Request) {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
         };
         try {
-          for await (const chunk of result.textStream) {
-            send({ type: "text", content: chunk });
+          if (!firstChunk.done) {
+            send({ type: "text", content: firstChunk.value });
+          }
+          while (true) {
+            const chunk = await textIterator.next();
+            if (chunk.done) break;
+            send({ type: "text", content: chunk.value });
           }
           send({ type: "finish" });
           controller.close();
         } catch (err) {
+          const generationError = getGenerationError(err);
           send({
             type: "error",
-            message: err instanceof Error ? err.message : "模板生成失败",
+            message: generationError.message,
           });
           controller.close();
         }
@@ -91,6 +140,7 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     console.error("模板生成错误:", error);
-    return NextResponse.json({ error: "模板生成失败" }, { status: 500 });
+    const generationError = getGenerationError(error);
+    return NextResponse.json({ error: generationError.message }, { status: generationError.status });
   }
 }

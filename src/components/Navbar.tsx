@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
-import { Button, Dropdown, Avatar, Space } from "antd";
+import { Button, Dropdown, Avatar } from "antd";
 import {
   HomeOutlined,
   BookOutlined,
@@ -11,9 +11,13 @@ import {
   SearchOutlined,
   ThunderboltOutlined,
   HistoryOutlined,
+  SunOutlined,
+  MoonOutlined,
+  TeamOutlined,
 } from "@ant-design/icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useThemeMode } from "@/components/ThemeProvider";
 
 const navLinks = [
   { key: "/", icon: <HomeOutlined />, label: "首页", href: "/" },
@@ -27,11 +31,43 @@ export default function Navbar() {
   const { data: session, status } = useSession();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const { mode, toggleMode } = useThemeMode();
+  const showAdmin = status === "authenticated" && isAdmin;
+
+  useEffect(() => {
+    let ignore = false;
+    if (status !== "authenticated") {
+      return;
+    }
+
+    fetch("/api/admin/me")
+      .then((res) => res.json())
+      .then((data) => {
+        if (!ignore) setIsAdmin(Boolean(data.isAdmin));
+      })
+      .catch(() => {
+        if (!ignore) setIsAdmin(false);
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [status]);
 
   const userMenu = session
     ? {
         items: [
           { key: "profile", icon: <UserOutlined />, label: session.user?.name || "用户", disabled: true },
+          ...(showAdmin
+            ? [
+                {
+                  key: "admin-users",
+                  icon: <TeamOutlined />,
+                  label: <Link href="/admin/users">用户管理</Link>,
+                },
+              ]
+            : []),
           { type: "divider" as const },
           { key: "logout", icon: <LogoutOutlined />, label: "退出登录", onClick: () => signOut() },
         ],
@@ -63,6 +99,17 @@ export default function Navbar() {
 
         {/* Right Section */}
         <div className="navbar-right">
+          <button
+            className="theme-toggle"
+            type="button"
+            onClick={toggleMode}
+            aria-label={mode === "dark" ? "切换到白天版" : "切换到黑夜版"}
+            title={mode === "dark" ? "切换到白天版" : "切换到黑夜版"}
+            suppressHydrationWarning
+          >
+            {mode === "dark" ? <SunOutlined /> : <MoonOutlined />}
+            <span>{mode === "dark" ? "白天版" : "黑夜版"}</span>
+          </button>
           {status === "loading" ? (
             <span style={{ color: "var(--muted-foreground)" }}>...</span>
           ) : session ? (
@@ -121,7 +168,7 @@ export default function Navbar() {
           position: sticky;
           top: 0;
           z-index: 100;
-          background: rgba(10, 10, 26, 0.8);
+          background: var(--navbar-bg);
           backdrop-filter: blur(20px);
           border-bottom: 1px solid var(--border);
         }
@@ -182,7 +229,28 @@ export default function Navbar() {
         .navbar-right {
           display: flex;
           align-items: center;
+          gap: 8px;
           flex-shrink: 0;
+        }
+        .theme-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          height: 34px;
+          padding: 0 11px;
+          border-radius: 8px;
+          border: 1px solid var(--border);
+          background: var(--card);
+          color: var(--muted-foreground);
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .theme-toggle:hover {
+          color: var(--foreground);
+          border-color: rgba(251, 114, 153, 0.35);
+          background: rgba(251, 114, 153, 0.08);
         }
         .navbar-user {
           display: flex;
@@ -194,7 +262,7 @@ export default function Navbar() {
           transition: background 0.2s;
         }
         .navbar-user:hover {
-          background: rgba(255, 255, 255, 0.06);
+          background: var(--hover-bg);
         }
         .navbar-username {
           color: var(--foreground);
@@ -255,6 +323,12 @@ export default function Navbar() {
           .navbar-mobile-toggle { display: block; }
           .navbar-mobile { display: flex; }
           .navbar-username { display: none; }
+          .theme-toggle span { display: none; }
+          .theme-toggle {
+            width: 34px;
+            justify-content: center;
+            padding: 0;
+          }
         }
       `}</style>
     </header>

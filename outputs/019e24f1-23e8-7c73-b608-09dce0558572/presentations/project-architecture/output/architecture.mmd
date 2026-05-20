@@ -1,0 +1,9 @@
+flowchart LR
+  Client["Web Client"] --> BFF["Next.js API Routes / BFF"]
+  BFF --> Platform["Platform Adapters: Bilibili / Douyin / Xiaohongshu"]
+  BFF --> AI["AI Streaming APIs"]
+  BFF --> DB["PostgreSQL via Prisma"]
+  Platform --> External["External video platforms"]
+  AI --> LLM["LLM providers"]
+  Platform --> Transcribe["VideoCaptioner / temp files"]
+  Transcribe --> BFF
