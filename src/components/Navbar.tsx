@@ -14,6 +14,7 @@ import {
   SunOutlined,
   MoonOutlined,
   TeamOutlined,
+  FileSearchOutlined,
 } from "@ant-design/icons";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -65,6 +66,11 @@ export default function Navbar() {
                   key: "admin-users",
                   icon: <TeamOutlined />,
                   label: <Link href="/admin/users">用户管理</Link>,
+                },
+                {
+                  key: "admin-logs",
+                  icon: <FileSearchOutlined />,
+                  label: <Link href="/admin/logs">日志中心</Link>,
                 },
               ]
             : []),

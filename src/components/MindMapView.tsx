@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Space } from "antd";
-import { CompressOutlined, CopyOutlined, ExpandOutlined } from "@ant-design/icons";
+import { CompressOutlined, CopyOutlined, DownloadOutlined, ExpandOutlined } from "@ant-design/icons";
 
 interface MindMapViewProps {
   markdown: string;
+  watermarkUrl?: string;
+  exportFileName?: string;
 }
 
 function getCommonJsExport<T>(module: T | { default?: T }): T {
@@ -77,13 +79,14 @@ function applyBrandMindMapColors(svg: SVGSVGElement) {
   });
 }
 
-export default function MindMapView({ markdown }: MindMapViewProps) {
+export default function MindMapView({ markdown, watermarkUrl, exportFileName = "视记思维导图.png" }: MindMapViewProps) {
   const { message } = App.useApp();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const styleTagRef = useRef<HTMLStyleElement | null>(null);
   const [copied, setCopied] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [exportingImage, setExportingImage] = useState(false);
 
   useEffect(() => {
     if (!styleTagRef.current) {
@@ -229,6 +232,75 @@ export default function MindMapView({ markdown }: MindMapViewProps) {
     }
   };
 
+  const handleDownloadImage = async () => {
+    const svg = containerRef.current?.querySelector<SVGSVGElement>("svg.markmap");
+    if (!svg) {
+      message.warning("思维导图还没有渲染完成");
+      return;
+    }
+
+    setExportingImage(true);
+    try {
+      applyBrandMindMapColors(svg);
+      const clone = svg.cloneNode(true) as SVGSVGElement;
+      clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      const width = Number.parseInt(svg.getAttribute("width") || "2200", 10);
+      const height = Number.parseInt(svg.getAttribute("height") || "760", 10);
+      const watermarkHeight = 64;
+      const scale = Math.min(2, Math.max(1, 1600 / width));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round((height + watermarkHeight) * scale);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas 初始化失败");
+
+      ctx.scale(scale, scale);
+      ctx.fillStyle = document.documentElement.classList.contains("dark") ? "#0a0a1a" : "#ffffff";
+      ctx.fillRect(0, 0, width, height + watermarkHeight);
+
+      const svgText = new XMLSerializer().serializeToString(clone);
+      const svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+      const svgUrl = URL.createObjectURL(svgBlob);
+      const image = new Image();
+      const loaded = new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("图片生成失败"));
+      });
+      image.src = svgUrl;
+      await loaded;
+      ctx.drawImage(image, 0, 0, width, height);
+      URL.revokeObjectURL(svgUrl);
+
+      ctx.fillStyle = document.documentElement.classList.contains("dark") ? "#101026" : "#f7f8fb";
+      ctx.fillRect(0, height, width, watermarkHeight);
+      ctx.fillStyle = "#fb7299";
+      ctx.font = "600 24px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+      ctx.fillText("视记 VideoNote", 32, height + 40);
+      ctx.fillStyle = document.documentElement.classList.contains("dark") ? "#a7a7c6" : "#6b7284";
+      ctx.font = "20px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+      ctx.fillText(watermarkUrl || "https://www.afai.asia", 230, height + 40);
+
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) resolve(result);
+          else reject(new Error("导出失败"));
+        }, "image/png", 0.95);
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = exportFileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      message.success("思维导图图片已导出");
+    } catch (error) {
+      console.error("思维导图图片导出失败:", error);
+      message.error("思维导图图片导出失败");
+    } finally {
+      setExportingImage(false);
+    }
+  };
+
   return (
     <div
       ref={wrapperRef}
@@ -262,6 +334,9 @@ export default function MindMapView({ markdown }: MindMapViewProps) {
           </Button>
           <Button size="small" icon={<CopyOutlined />} type={copied ? "primary" : "default"} onClick={handleCopyMarkdown}>
             {copied ? "已复制" : "复制 Markdown"}
+          </Button>
+          <Button size="small" icon={<DownloadOutlined />} loading={exportingImage} onClick={handleDownloadImage}>
+            导出图片
           </Button>
         </Space>
       </div>

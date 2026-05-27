@@ -4,7 +4,8 @@ WORKDIR /app
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL=postgresql://postgres:postgres@localhost:5432/videonote?schema=public
-ENV NEXTAUTH_URL=http://localhost:3000
+ENV NEXTAUTH_URL=https://www.afai.asia
+ENV NEXT_PUBLIC_SITE_URL=https://www.afai.asia
 ENV NEXTAUTH_SECRET=build-time-placeholder
 
 COPY package.json package-lock.json ./

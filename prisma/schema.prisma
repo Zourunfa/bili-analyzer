@@ -21,6 +21,7 @@ model User {
   videoTags      VideoTag[]
   videoTagRelations VideoTagRelation[]
   chatMessages   ChatMessage[]
+  sharePages     SharePage[]
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -228,4 +229,26 @@ model ChatMessage {
   @@index([userId, videoId, createdAt])
   @@index([videoId])
   @@map("chat_messages")
+}
+
+// 公开分享页
+model SharePage {
+  id          String   @id @default(cuid())
+  shareId     String   @unique @map("share_id")
+  userId      String   @map("user_id")
+  targetType  String   @map("target_type") // video | notebook
+  targetId    String   @map("target_id")
+  title       String
+  description String?
+  coverImage  String?  @map("cover_image")
+  visibility  String   @default("public") // public | unlisted | disabled
+  viewCount   Int      @default(0) @map("view_count")
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, targetType, targetId])
+  @@index([targetType, targetId])
+  @@index([visibility, updatedAt])
+  @@map("share_pages")
 }

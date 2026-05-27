@@ -23,9 +23,9 @@ export function useThemeMode() {
 }
 
 function getStoredTheme(): ThemeMode {
-  if (typeof window === "undefined") return "dark";
+  if (typeof window === "undefined") return "light";
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  return stored === "light" || stored === "dark" ? stored : "dark";
+  return stored === "light" || stored === "dark" ? stored : "light";
 }
 
 function subscribeToTheme(onStoreChange: () => void) {
@@ -45,7 +45,7 @@ function applyThemeClass(mode: ThemeMode) {
 }
 
 export default function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const mode = useSyncExternalStore<ThemeMode>(subscribeToTheme, getStoredTheme, () => "dark");
+  const mode = useSyncExternalStore<ThemeMode>(subscribeToTheme, getStoredTheme, () => "light");
 
   useEffect(() => {
     applyThemeClass(mode);

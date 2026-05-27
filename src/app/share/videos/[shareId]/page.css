@@ -1,0 +1,201 @@
+.share-page {
+  min-height: calc(100vh - 56px);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.share-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.72fr);
+  gap: 36px;
+  align-items: center;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 48px 24px 38px;
+}
+
+.share-kicker,
+.share-section-heading span {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.share-hero h1 {
+  color: var(--foreground);
+  font-size: 42px;
+  line-height: 1.18;
+  letter-spacing: 0;
+  margin: 10px 0 16px;
+}
+
+.share-hero p {
+  color: var(--muted-foreground);
+  font-size: 16px;
+  line-height: 1.8;
+  margin: 0;
+}
+
+.share-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.share-meta span {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  padding: 5px 9px;
+  font-size: 13px;
+}
+
+.share-attribution {
+  margin-top: 14px;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.share-actions a,
+.share-cta a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 8px;
+  color: #fff;
+  background: linear-gradient(135deg, #fb7299, #e85d8a);
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.share-actions a:first-child {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--foreground);
+}
+
+.share-cover {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+}
+
+.share-section {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 30px 24px;
+}
+
+.share-section-heading {
+  margin-bottom: 16px;
+}
+
+.share-section-heading h2,
+.share-cta h2 {
+  color: var(--foreground);
+  font-size: 26px;
+  line-height: 1.28;
+  margin: 6px 0 0;
+}
+
+.share-markdown {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 24px;
+  line-height: 1.85;
+}
+
+.share-markdown h1,
+.share-markdown h2,
+.share-markdown h3 {
+  color: var(--foreground);
+}
+
+.share-markdown p,
+.share-markdown li {
+  color: var(--markdown-foreground);
+}
+
+.share-mindmap {
+  height: 640px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.knowledge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.knowledge-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.knowledge-card span {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.knowledge-card p,
+.share-empty {
+  color: var(--muted-foreground);
+  line-height: 1.7;
+  margin: 8px 0 0;
+}
+
+.share-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  max-width: 1180px;
+  margin: 28px auto 54px;
+  padding: 26px 24px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 860px) {
+  .share-hero {
+    grid-template-columns: 1fr;
+    padding-top: 28px;
+  }
+
+  .share-hero h1 {
+    font-size: 30px;
+  }
+
+  .knowledge-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .share-mindmap {
+    height: 560px;
+  }
+
+  .share-cta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

@@ -223,6 +223,90 @@
 .animation-delay-4 { animation-delay: 0.4s; opacity: 0; }
 .animation-delay-5 { animation-delay: 0.5s; opacity: 0; }
 
+/* ===== PUBLIC SEO PAGES ===== */
+.public-footer {
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+}
+.public-footer-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.public-footer-brand {
+  color: var(--foreground);
+  font-weight: 700;
+  text-decoration: none;
+}
+.public-footer p {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+.public-footer nav {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.public-footer nav a {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-decoration: none;
+}
+.public-footer nav a:hover,
+.public-footer-brand:hover {
+  color: var(--primary);
+}
+.legal-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 56px 24px 72px;
+}
+.legal-page h1 {
+  margin: 0 0 12px;
+  color: var(--foreground);
+  font-size: 34px;
+  line-height: 1.2;
+}
+.legal-page .lead {
+  margin: 0 0 28px;
+  color: var(--muted-foreground);
+  font-size: 16px;
+}
+.legal-section {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+.legal-section h2 {
+  margin: 0 0 12px;
+  color: var(--foreground);
+  font-size: 20px;
+}
+.legal-section p,
+.legal-section li {
+  color: var(--markdown-foreground);
+  line-height: 1.8;
+}
+.legal-section ul {
+  margin: 0;
+  padding-left: 20px;
+}
+@media (max-width: 720px) {
+  .public-footer-inner {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .legal-page h1 {
+    font-size: 28px;
+  }
+}
+
 /* ===== PULSE DOT ===== */
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }

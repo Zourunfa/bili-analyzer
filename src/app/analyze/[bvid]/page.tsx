@@ -19,7 +19,6 @@ import {
   PlusOutlined,
   HistoryOutlined,
   SearchOutlined,
-  ExportOutlined,
   CheckCircleOutlined,
   DownloadOutlined,
   FolderOpenOutlined,
@@ -30,6 +29,8 @@ import {
   SettingOutlined,
   StopOutlined,
   CaretRightOutlined,
+  ShareAltOutlined,
+  LinkOutlined,
 } from "@ant-design/icons";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -118,6 +119,12 @@ interface TemplateItem {
   id: string;
   name: string;
   description: string;
+}
+
+interface VideoShareInfo {
+  shareId: string;
+  visibility: string;
+  url: string;
 }
 
 interface ModelProviderItem {
@@ -473,6 +480,8 @@ export default function AnalyzePage() {
   const [mindmapCopied, setMindmapCopied] = useState(false);
   const [summaryCopied, setSummaryCopied] = useState(false);
   const [subtitleCopied, setSubtitleCopied] = useState(false);
+  const [shareInfo, setShareInfo] = useState<VideoShareInfo | null>(null);
+  const [shareLoading, setShareLoading] = useState(false);
   const [modelProviders, setModelProviders] = useState<ModelProviderItem[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<string>("");
   const [runtimeModelConfig, setRuntimeModelConfig] = useState<RuntimeModelConfig | null>(null);
@@ -1942,6 +1951,80 @@ export default function AnalyzePage() {
 
   const closeDrawer = () => setDrawerOpen(false);
 
+  const fetchShareStatus = useCallback(async (videoId: string) => {
+    if (authStatus !== "authenticated") return;
+    try {
+      const res = await fetch(`/api/share/videos/${videoId}`);
+      const data = await res.json();
+      if (res.ok) {
+        setShareInfo(data.share);
+      }
+    } catch {
+      // 分享状态不阻塞主流程
+    }
+  }, [authStatus]);
+
+  const handleCreateShare = async () => {
+    if (authStatus !== "authenticated") {
+      message.warning("请先登录");
+      router.push("/login");
+      return;
+    }
+    if (!currentVideoId) {
+      message.warning("视频保存完成后才能公开分享");
+      return;
+    }
+
+    setShareLoading(true);
+    try {
+      const res = await fetch(`/api/share/videos/${currentVideoId}`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        message.error(data.error || "创建分享失败");
+        return;
+      }
+      setShareInfo(data.share);
+      await navigator.clipboard.writeText(data.share.url);
+      message.success("公开分享已开启，链接已复制");
+    } catch {
+      message.error("创建分享失败");
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const handleCopyShareUrl = async () => {
+    if (!shareInfo?.url) return;
+    await navigator.clipboard.writeText(shareInfo.url);
+    message.success("分享链接已复制");
+  };
+
+  const handleDisableShare = async () => {
+    if (!currentVideoId) return;
+    setShareLoading(true);
+    try {
+      const res = await fetch(`/api/share/videos/${currentVideoId}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) {
+        message.error(data.error || "关闭分享失败");
+        return;
+      }
+      setShareInfo(data.share);
+      message.success("公开分享已关闭");
+    } catch {
+      message.error("关闭分享失败");
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setShareInfo(null);
+    if (currentVideoId) {
+      fetchShareStatus(currentVideoId);
+    }
+  }, [currentVideoId, fetchShareStatus]);
+
   const handleOpenTagModal = async () => {
     if (authStatus !== "authenticated") {
       message.warning("请先登录");
@@ -2518,7 +2601,7 @@ export default function AnalyzePage() {
             {videoInfo.title}
           </Text>
         )}
-        <Space.Compact className="header-search" style={{ maxWidth: 380, flex: 1 }}>
+        <Space.Compact className="header-search" style={{ maxWidth: 420, minWidth: 300, flex: "0 1 420px" }}>
           <Input
             size="small"
             value={headerUrl}
@@ -2540,70 +2623,83 @@ export default function AnalyzePage() {
           </Button>
         </Space.Compact>
         <div className="header-actions">
-        <Select
-          size="small"
-          value={selectedModelId || undefined}
-          onChange={handleModelChange}
-          placeholder="模型"
-          title={selectedModelLabel}
-          style={{ width: 180 }}
-          popupMatchSelectWidth={260}
-          options={modelSelectOptions}
-          disabled={modelSelectOptions.length === 0}
-        />
-        <Button
-          className="header-action-btn"
-          icon={<SettingOutlined />}
-          onClick={openModelConfigModal}
-          style={{ borderColor: "var(--border)" }}
-        >
-          配置模型
-        </Button>
-        <Button
-          className="header-action-btn"
-          icon={<TagsOutlined />}
-          onClick={handleOpenTagModal}
-          disabled={!bvid || isHistoryMode || !currentVideoId}
-          style={{ borderColor: "var(--border)" }}
-        >
-          标签
-        </Button>
-        <Button
-          className="header-action-btn"
-          icon={<FileMarkdownOutlined />}
-          onClick={handleOpenTemplateModal}
-          disabled={!subtitleText || !summary}
-          style={{ borderColor: "#8b5cf6" }}
-        >
-          模板输出
-        </Button>
-        <Button
-          className="header-action-btn"
-          icon={<BookOutlined />}
-          onClick={() => router.push("/notebooks")}
-          style={{ borderColor: "var(--border)" }}
-        >
-          智能合集
-        </Button>
-        <Button
-          className="header-action-btn"
-          icon={<SaveOutlined style={{ color: "bisque" }}/>}
-          onClick={handleOpenSaveModal}
-          disabled={!subtitleText || !summary}
-          style={{ borderColor: "#fb7299" }}
-        >
-          保存到笔记本
-        </Button>
-        <Button
-          className="header-action-btn"
-          icon={<ExportOutlined style={{ color: "#fbbf24" }}/>}
-          onClick={handleExportSkill}
-          loading={exportLoading}
-          disabled={!subtitleText}
-          style={{ borderColor: "#fbbf24" }}
-        >
-          导出 Skill
-        </Button>
+          {shareInfo?.visibility === "public" ? (
+            <>
+              <Button
+                className="header-action-btn header-share-primary"
+                type="primary"
+                icon={<LinkOutlined />}
+                onClick={handleCopyShareUrl}
+              >
+                复制分享
+              </Button>
+              <Button
+                className="header-action-btn"
+                danger
+                onClick={handleDisableShare}
+                loading={shareLoading}
+              >
+                关闭分享
+              </Button>
+            </>
+          ) : (
+            <Button
+              className="header-action-btn header-share-primary"
+              type="primary"
+              icon={<ShareAltOutlined />}
+              onClick={handleCreateShare}
+              loading={shareLoading}
+              disabled={!summary || !currentVideoId}
+            >
+              公开分享
+            </Button>
+          )}
+          <Select
+            size="small"
+            value={selectedModelId || undefined}
+            onChange={handleModelChange}
+            placeholder="模型"
+            title={selectedModelLabel}
+            style={{ width: 180 }}
+            popupMatchSelectWidth={260}
+            options={modelSelectOptions}
+            disabled={modelSelectOptions.length === 0}
+          />
+          <Button
+            className="header-action-btn"
+            icon={<SettingOutlined />}
+            onClick={openModelConfigModal}
+            style={{ borderColor: "var(--border)" }}
+          >
+            配置模型
+          </Button>
+          <Button
+            className="header-action-btn"
+            icon={<TagsOutlined />}
+            onClick={handleOpenTagModal}
+            disabled={!bvid || isHistoryMode || !currentVideoId}
+            style={{ borderColor: "var(--border)" }}
+          >
+            标签
+          </Button>
+          <Button
+            className="header-action-btn"
+            icon={<FileMarkdownOutlined />}
+            onClick={handleOpenTemplateModal}
+            disabled={!subtitleText || !summary}
+            style={{ borderColor: "#8b5cf6" }}
+          >
+            模板输出
+          </Button>
+          <Button
+            className="header-action-btn"
+            icon={<SaveOutlined style={{ color: "bisque" }}/>}
+            onClick={handleOpenSaveModal}
+            disabled={!subtitleText || !summary}
+            style={{ borderColor: "#fb7299" }}
+          >
+            保存到笔记本
+          </Button>
         </div>
       </Header>
 
@@ -2792,7 +2888,11 @@ export default function AnalyzePage() {
                         style={{ paddingTop: 80 }}
                       />
                     ) : (
-                      <MindMapView markdown={summary} />
+                      <MindMapView
+                        markdown={summary}
+                        watermarkUrl={shareInfo?.visibility === "public" ? shareInfo.url : "https://www.afai.asia"}
+                        exportFileName={`${(videoInfo?.title || bvid).replace(/[\\/:*?"<>|]/g, "_")}-视记思维导图.png`}
+                      />
                     )}
                   </div>
                 ),
@@ -3684,7 +3784,42 @@ export default function AnalyzePage() {
           display: flex;
           align-items: center;
           gap: 10px;
+          flex: 0 1 auto;
           min-width: 0;
+          max-width: 100%;
+          overflow-x: auto;
+          overflow-y: hidden;
+          scrollbar-width: none;
+          -webkit-overflow-scrolling: touch;
+          overscroll-behavior-inline: contain;
+        }
+        .analyze-header .header-back-link {
+          flex: 0 0 auto;
+          white-space: nowrap;
+          line-height: 1;
+        }
+        .analyze-header .header-video-title,
+        .analyze-header .header-search {
+          min-width: 0;
+        }
+        .analyze-header .header-search {
+          flex: 0 1 420px !important;
+          max-width: 420px !important;
+          min-width: 300px;
+        }
+        .analyze-header .header-search .ant-input-affix-wrapper {
+          flex: 1 1 auto;
+          min-width: 0;
+        }
+        .analyze-header .header-search .ant-btn {
+          flex: 0 0 64px;
+        }
+        .analyze-header .header-actions::-webkit-scrollbar {
+          display: none;
+        }
+        .analyze-header .header-actions .ant-select,
+        .analyze-header .header-actions .ant-btn {
+          flex: 0 0 auto;
         }
         .analyze-header .header-action-btn {
           color: var(--foreground);
@@ -3703,6 +3838,22 @@ export default function AnalyzePage() {
           color: var(--muted-foreground);
           background: var(--muted);
           opacity: 0.58;
+        }
+        .analyze-header .header-share-primary {
+          border-color: #fb7299 !important;
+          background: linear-gradient(135deg, #fb7299 0%, #ff9f1c 100%) !important;
+          color: #fff !important;
+          box-shadow: 0 8px 22px rgba(251, 114, 153, 0.34);
+          font-weight: 700;
+        }
+        .analyze-header .header-share-primary:not(:disabled):hover {
+          border-color: #ff9f1c !important;
+          background: linear-gradient(135deg, #ff5f96 0%, #ffb347 100%) !important;
+          color: #fff !important;
+          box-shadow: 0 10px 26px rgba(251, 114, 153, 0.42);
+        }
+        .analyze-header .header-share-primary:disabled {
+          box-shadow: none;
         }
         .mobile-side-panel-wrap {
           padding: 12px 12px 0;
@@ -4014,6 +4165,7 @@ export default function AnalyzePage() {
             width: 100%;
             max-width: none !important;
             min-width: 0;
+            flex: none !important;
           }
           .analyze-header .header-actions {
             grid-area: actions;
