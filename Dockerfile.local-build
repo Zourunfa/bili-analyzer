@@ -7,6 +7,7 @@ ENV DATABASE_URL=postgresql://postgres:postgres@localhost:5432/videonote?schema=
 ENV NEXTAUTH_URL=https://www.afai.asia
 ENV NEXT_PUBLIC_SITE_URL=https://www.afai.asia
 ENV NEXTAUTH_SECRET=build-time-placeholder
+ENV PRISMA_ENGINES_MIRROR=https://registry.npmmirror.com/-/binary/prisma
 
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
