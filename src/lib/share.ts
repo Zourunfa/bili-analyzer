@@ -8,6 +8,10 @@ export function getVideoShareUrl(shareId: string) {
   return `${SITE_URL}/share/videos/${shareId}`;
 }
 
+export function getNotebookShareUrl(shareId: string) {
+  return `${SITE_URL}/share/notebooks/${shareId}`;
+}
+
 export function makeSeoDescription(summary?: string | null, fallback?: string | null) {
   const raw = (summary || fallback || "用视记将视频转化为可检索、可对话、可分享的结构化知识。")
     .replace(/[#>*_`[\]()]/g, "")

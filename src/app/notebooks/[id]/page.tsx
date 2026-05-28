@@ -4,12 +4,12 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import {
-  Card, Typography, Space, Tag, Button, Spin, Empty, Row, Col, Divider, message,
+  Card, Typography, Space, Tag, Button, Spin, Empty, Row, Col, Divider, message, Tooltip,
 } from "antd";
 import {
   ArrowLeftOutlined, PlayCircleOutlined, ExportOutlined, DeleteOutlined,
   FileTextOutlined, CheckCircleOutlined, LoadingOutlined, DownloadOutlined,
-  FolderOpenOutlined,
+  FolderOpenOutlined, ShareAltOutlined, LinkOutlined,
 } from "@ant-design/icons";
 import Link from "next/link";
 import JSZip from "jszip";
@@ -36,8 +36,15 @@ interface Notebook {
   title: string;
   description: string | null;
   tags: string[];
+  mode: "manual" | "smart";
   videoCount: number;
   videos: NotebookVideo[];
+}
+
+interface NotebookShareInfo {
+  shareId: string;
+  visibility: string;
+  url: string;
 }
 
 interface ExportResult {
@@ -73,6 +80,9 @@ export default function NotebookDetailPage() {
   const [notebook, setNotebook] = useState<Notebook | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [shareInfo, setShareInfo] = useState<NotebookShareInfo | null>(null);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareBlockReason, setShareBlockReason] = useState<string | null>(null);
 
   // Drawer 状态
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -97,6 +107,7 @@ export default function NotebookDetailPage() {
       if (res.ok) {
         const data = await res.json();
         setNotebook(data.notebook);
+        fetchShareStatus();
       } else {
         message.error("笔记本不存在");
         router.push("/notebooks");
@@ -105,6 +116,64 @@ export default function NotebookDetailPage() {
       message.error("获取失败");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchShareStatus = async () => {
+    try {
+      const res = await fetch(`/api/share/notebooks/${params.id}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setShareInfo(data.share);
+      setShareBlockReason(data.reason || null);
+    } catch {
+      setShareInfo(null);
+    }
+  };
+
+  const handleCreateShare = async () => {
+    if (!notebook) return;
+    setShareLoading(true);
+    try {
+      const res = await fetch(`/api/share/notebooks/${notebook.id}`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        message.error(data.error || "开启公开分享失败");
+        return;
+      }
+      setShareInfo(data.share);
+      setShareBlockReason(null);
+      await navigator.clipboard.writeText(data.share.url);
+      message.success("笔记本公开分享已开启，链接已复制");
+    } catch {
+      message.error("开启公开分享失败");
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const handleCopyShareUrl = async () => {
+    if (!shareInfo?.url) return;
+    await navigator.clipboard.writeText(shareInfo.url);
+    message.success("分享链接已复制");
+  };
+
+  const handleDisableShare = async () => {
+    if (!notebook) return;
+    setShareLoading(true);
+    try {
+      const res = await fetch(`/api/share/notebooks/${notebook.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) {
+        message.error(data.error || "关闭公开分享失败");
+        return;
+      }
+      setShareInfo(data.share);
+      message.success("公开分享已关闭");
+    } catch {
+      message.error("关闭公开分享失败");
+    } finally {
+      setShareLoading(false);
     }
   };
 
@@ -227,6 +296,8 @@ export default function NotebookDetailPage() {
   if (!notebook) return null;
 
   const stepIndex = STEPS.findIndex((s) => s.key === currentStep);
+  const isSharePublic = shareInfo?.visibility === "public";
+  const canCreateShare = notebook.mode === "manual" && notebook.videos.length > 0;
 
   return (
     <>
@@ -250,7 +321,35 @@ export default function NotebookDetailPage() {
                 {notebook.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
               </div>
             </div>
-            <Space>
+            <Space wrap>
+              {isSharePublic ? (
+                <>
+                  <Button
+                    type="primary"
+                    icon={<LinkOutlined />}
+                    onClick={handleCopyShareUrl}
+                    className="notebook-share-main-btn"
+                  >
+                    复制公开分享
+                  </Button>
+                  <Button danger onClick={handleDisableShare} loading={shareLoading}>
+                    关闭分享
+                  </Button>
+                </>
+              ) : (
+                <Tooltip title={canCreateShare ? "" : shareBlockReason || "当前笔记本暂不支持公开分享"}>
+                  <Button
+                    type="primary"
+                    icon={<ShareAltOutlined />}
+                    onClick={handleCreateShare}
+                    loading={shareLoading}
+                    disabled={!canCreateShare}
+                    className="notebook-share-main-btn"
+                  >
+                    公开分享笔记本
+                  </Button>
+                </Tooltip>
+              )}
               <Button icon={<ExportOutlined />} onClick={handleExportMarkdown} loading={exporting}>
                 导出 Markdown
               </Button>
@@ -423,6 +522,11 @@ export default function NotebookDetailPage() {
       </div>
 
       <style jsx>{`
+        :global(.notebook-share-main-btn) {
+          min-height: 40px;
+          font-weight: 700;
+          box-shadow: 0 10px 24px rgba(251, 114, 153, 0.22);
+        }
         .drawer-overlay {
           position: fixed;
           inset: 0;

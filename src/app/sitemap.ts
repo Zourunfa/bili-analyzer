@@ -46,23 +46,40 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    const shares = await prisma.sharePage.findMany({
-      where: { targetType: "video", visibility: "public" },
-      orderBy: { updatedAt: "desc" },
-      take: 5000,
-      select: {
-        shareId: true,
-        updatedAt: true,
-      },
-    });
+    const [videoShares, notebookShares] = await Promise.all([
+      prisma.sharePage.findMany({
+        where: { targetType: "video", visibility: "public" },
+        orderBy: { updatedAt: "desc" },
+        take: 5000,
+        select: {
+          shareId: true,
+          updatedAt: true,
+        },
+      }),
+      prisma.sharePage.findMany({
+        where: { targetType: "notebook", visibility: "public" },
+        orderBy: { updatedAt: "desc" },
+        take: 1000,
+        select: {
+          shareId: true,
+          updatedAt: true,
+        },
+      }),
+    ]);
 
     return [
       ...baseEntries,
-      ...shares.map((share) => ({
+      ...videoShares.map((share) => ({
         url: `${SITE_URL}/share/videos/${share.shareId}`,
         lastModified: share.updatedAt,
         changeFrequency: "weekly" as const,
         priority: 0.7,
+      })),
+      ...notebookShares.map((share) => ({
+        url: `${SITE_URL}/share/notebooks/${share.shareId}`,
+        lastModified: share.updatedAt,
+        changeFrequency: "weekly" as const,
+        priority: 0.75,
       })),
     ];
   } catch (error) {
