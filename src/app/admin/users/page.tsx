@@ -97,7 +97,7 @@ export default function AdminUsersPage() {
   const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 });
   const [sorter, setSorter] = useState<{ field: string; order: "ascend" | "descend" }>({
     field: "createdAt",
-    order: "descend",
+    order: "ascend",
   });
   const currentPage = pagination.current;
   const pageSize = pagination.pageSize;
@@ -237,6 +237,7 @@ export default function AdminUsersPage() {
         title: "注册时间",
         dataIndex: "createdAt",
         sorter: true,
+        defaultSortOrder: "ascend",
         width: 170,
         render: formatDate,
       },

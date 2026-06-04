@@ -15,6 +15,9 @@ model User {
   avatar        String?
   password      String     // bcrypt 哈希
   emailVerified DateTime?  @map("email_verified_at")  // 邮箱验证时间
+  isSeed        Boolean    @default(false) @map("is_seed")
+  seedBatch     String?    @map("seed_batch")
+  seedPersona   Json?      @map("seed_persona")
   notebooks     Notebook[]
   userVideos    UserVideo[]
   timestampNotes VideoTimestampNote[]
@@ -51,6 +54,8 @@ model Notebook {
   mode        String          @default("manual")
   rule        Json?
   videoCount  Int             @default(0)
+  isSeed      Boolean         @default(false) @map("is_seed")
+  seedBatch   String?         @map("seed_batch")
   user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   videos      NotebookVideo[]
   createdAt   DateTime        @default(now())
@@ -95,6 +100,8 @@ model UserVideo {
   videoId   String   @map("video_id")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  isSeed    Boolean  @default(false) @map("is_seed")
+  seedBatch String?  @map("seed_batch")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -111,6 +118,8 @@ model NotebookVideo {
   videoId    String   @map("video_id")
   notes      String?
   order      Int      @default(0)
+  isSeed     Boolean  @default(false) @map("is_seed")
+  seedBatch  String?  @map("seed_batch")
   notebook   Notebook @relation(fields: [notebookId], references: [id], onDelete: Cascade)
   video      Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
   addedAt    DateTime @default(now()) @map("added_at")
@@ -222,6 +231,8 @@ model ChatMessage {
   videoId   String   @map("video_id")
   role      String
   content   String
+  isSeed    Boolean  @default(false) @map("is_seed")
+  seedBatch String?  @map("seed_batch")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   video     Video    @relation(fields: [videoId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())

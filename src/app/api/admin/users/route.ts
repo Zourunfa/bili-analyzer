@@ -15,7 +15,7 @@ export async function GET(req: Request) {
     const keyword = url.searchParams.get("keyword")?.trim() || "";
     const verified = url.searchParams.get("verified") || "all";
     const sortFieldParam = url.searchParams.get("sortField") || "createdAt";
-    const sortOrder = url.searchParams.get("sortOrder") === "ascend" ? "asc" : "desc";
+    const sortOrder = url.searchParams.get("sortOrder") === "descend" ? "desc" : "asc";
     const sortField = SORT_FIELDS.has(sortFieldParam) ? sortFieldParam : "createdAt";
 
     const where = {
